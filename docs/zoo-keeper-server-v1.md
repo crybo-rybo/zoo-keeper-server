@@ -7,6 +7,9 @@
   - Expose a small OpenAI-like HTTP API over JSON, with SSE when stream=true.
   - Keep v1 intentionally narrow: single shared model/runtime, stateless requests, built-
     in in-process tools only, no auth, no persistence.
+  - The zoo-keeper project this is based around can be found at the following location: https://github.com/crybo-rybo/zoo-keeper.git
+  - The zoo-keeper library should be included as a git submodule within this project. Include it in an extern/ folder.
+  - Any changes to the zoo-keeper code should not be directly made within this project, instead, github "issues" should be written against the zoo-keeper project.
 
   ## Key Changes
 
