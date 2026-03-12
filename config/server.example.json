@@ -1,0 +1,12 @@
+{
+  "bind_address": "127.0.0.1",
+  "port": 8080,
+  "model_id": "local-model",
+  "zoo": {
+    "model_path": "/absolute/path/to/model.gguf",
+    "context_size": 8192,
+    "n_gpu_layers": 0,
+    "max_tokens": 256,
+    "system_prompt": "You are a helpful assistant."
+  }
+}

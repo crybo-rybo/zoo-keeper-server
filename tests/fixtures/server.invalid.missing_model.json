@@ -1,0 +1,8 @@
+{
+  "bind_address": "127.0.0.1",
+  "port": 18080,
+  "model_id": "broken-model",
+  "zoo": {
+    "model_path": ""
+  }
+}

@@ -1,20 +1,36 @@
-#include <zoo/zoo.hpp>
+#include "server/config.hpp"
+#include "server/health.hpp"
+#include "server/runtime.hpp"
+
+#include <drogon/drogon.h>
 
 #include <iostream>
 
-int main() {
-    auto agent_result = zoo::Agent::create(zoo::Config{});
-    if (!agent_result) {
-        const zoo::Error& error = agent_result.error();
-        if (error.code == zoo::ErrorCode::InvalidModelPath) {
-            std::cout << "Observed expected InvalidModelPath validation failure." << '\n';
-            return 0;
-        }
-
-        std::cerr << "Unexpected zoo-keeper error: " << error.to_string() << '\n';
+int main(int argc, char** argv) {
+    if (argc != 2) {
+        std::cerr << "Usage: zoo_keeper_server <config.json>" << '\n';
         return 1;
     }
 
-    std::cerr << "Unexpected success creating zoo::Agent with an empty config." << '\n';
-    return 1;
+    auto config_result = zks::server::load_config(argv[1]);
+    if (!config_result) {
+        std::cerr << "Config load failed: " << config_result.error() << '\n';
+        return 1;
+    }
+
+    auto runtime_result = zks::server::ServerRuntime::create(std::move(*config_result));
+    if (!runtime_result) {
+        std::cerr << "Config bootstrap failed: " << runtime_result.error() << '\n';
+        return 1;
+    }
+
+    const auto& config = (*runtime_result)->config();
+    zks::server::register_health_routes(*runtime_result);
+
+    drogon::app().addListener(config.bind_address, config.port)
+        .setLogLevel(trantor::Logger::kWarn)
+        .disableSession()
+        .run();
+
+    return 0;
 }
