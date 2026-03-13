@@ -72,37 +72,41 @@ std::int64_t now_seconds() {
 
 Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfig& config) {
     const auto startup_tools = make_startup_tools();
-    auto stateless_result = create_configured_agent(config.zoo_config, startup_tools, std::nullopt);
-    if (!stateless_result) {
-        return std::unexpected(stateless_result.error());
+    auto shared_result = create_configured_agent(config.zoo_config, startup_tools, std::nullopt);
+    if (!shared_result) {
+        return std::unexpected(shared_result.error());
     }
 
+    auto shared_agent = std::move(shared_result->agent);
+    auto* agent = shared_agent.get();
     auto session_manager = std::make_unique<SessionManager>(
-        config.model_id, config.sessions,
-        [base_config = config.zoo_config, startup_tools](
-            const std::optional<std::string>& extra_prompt) -> Result<std::unique_ptr<zoo::Agent>> {
-            auto agent_result = create_configured_agent(base_config, startup_tools, extra_prompt);
-            if (!agent_result) {
-                return std::unexpected(agent_result.error());
+        config.model_id, config.sessions, shared_result->request_system_prompt,
+        config.zoo_config.max_history_messages,
+        [agent](std::vector<zoo::Message> messages,
+                std::optional<std::function<void(std::string_view)>> callback) {
+            return agent->complete(std::move(messages), std::move(callback));
+        },
+        [agent](zoo::RequestId request_id) {
+            if (agent) {
+                agent->cancel(request_id);
             }
-            return std::move(agent_result->agent);
         });
 
     return std::make_shared<ZooChatService>(
-        config.model_id, std::move(stateless_result->request_system_prompt),
-        startup_tools.metadata, std::move(stateless_result->agent), std::move(session_manager));
+        config.model_id, std::move(shared_result->request_system_prompt), startup_tools.metadata,
+        std::move(shared_agent), std::move(session_manager));
 }
 
 ZooChatService::ZooChatService(std::string model_id, std::string request_system_prompt,
                                std::vector<zoo::tools::ToolMetadata> tool_metadata,
-                               std::unique_ptr<zoo::Agent> stateless_agent,
+                               std::unique_ptr<zoo::Agent> shared_agent,
                                std::unique_ptr<SessionManager> session_manager)
     : model_id_(std::move(model_id)), request_system_prompt_(std::move(request_system_prompt)),
-      tool_metadata_(std::move(tool_metadata)), stateless_agent_(std::move(stateless_agent)),
+      tool_metadata_(std::move(tool_metadata)), agent_(std::move(shared_agent)),
       session_manager_(std::move(session_manager)) {}
 
 bool ZooChatService::is_ready() const noexcept {
-    return static_cast<bool>(stateless_agent_) && stateless_agent_->is_running();
+    return static_cast<bool>(agent_) && agent_->is_running();
 }
 
 const std::string& ZooChatService::model_id() const noexcept {
@@ -133,7 +137,7 @@ ZooChatService::start_completion(const ChatCompletionRequest& request,
             invalid_request_error("Unknown model: " + request.model, "model", "invalid_model"));
     }
 
-    auto handle = stateless_agent_->complete(prepare_messages(request), std::move(callback));
+    auto handle = agent_->complete(prepare_messages(request), std::move(callback));
     const auto request_id = handle.id;
     const auto created = now_seconds();
     const auto completion_id =
@@ -144,7 +148,8 @@ ZooChatService::start_completion(const ChatCompletionRequest& request,
         created,
         model_id_,
         std::move(handle),
-        [agent = stateless_agent_.get(), request_id] {
+        {},
+        [agent = agent_.get(), request_id] {
             if (agent) {
                 agent->cancel(request_id);
             }
@@ -154,6 +159,10 @@ ZooChatService::start_completion(const ChatCompletionRequest& request,
 }
 
 ApiResult<SessionSummary> ZooChatService::create_session(const SessionCreateRequest& request) {
+    if (!is_ready()) {
+        return std::unexpected(
+            service_unavailable_error("Server runtime is not ready", "agent_not_ready"));
+    }
     return session_manager_->create_session(request);
 }
 
@@ -169,8 +178,8 @@ void ZooChatService::stop() {
     if (session_manager_) {
         session_manager_->stop();
     }
-    if (stateless_agent_) {
-        stateless_agent_->stop();
+    if (agent_) {
+        agent_->stop();
     }
 }
 

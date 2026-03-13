@@ -21,6 +21,14 @@ void release_completion(const PendingChatCompletion& pending) {
     }
 }
 
+void finalize_completion(const PendingChatCompletion& pending,
+                         const zoo::Expected<zoo::Response>& result) {
+    if (pending.on_result) {
+        pending.on_result(result);
+    }
+    release_completion(pending);
+}
+
 void log_request_start(const PendingChatCompletion& pending, const ChatCompletionRequest& request) {
     std::clog << "[request] event=start completion_id=" << pending.id << " model=" << pending.model
               << " stream=" << (request.stream ? "true" : "false");
@@ -248,11 +256,11 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
         auto result = pending->handle.future.get();
         log_request_result(*pending, request, result);
         if (!result) {
-            release_completion(*pending);
+            finalize_completion(*pending, result);
             callback(make_error_response(map_zoo_error_to_api_error(result.error())));
             return;
         }
-        release_completion(*pending);
+        finalize_completion(*pending, result);
         callback(
             make_chat_completion_response(pending->id, pending->created, pending->model, *result));
         return;
@@ -263,12 +271,12 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
             auto result = pending.handle.future.get();
             log_request_result(pending, request, result);
             if (!result) {
-                release_completion(pending);
+                finalize_completion(pending, result);
                 callback(make_error_response(map_zoo_error_to_api_error(result.error())));
                 return;
             }
 
-            release_completion(pending);
+            finalize_completion(pending, result);
             callback(
                 make_chat_completion_response(pending.id, pending.created, pending.model, *result));
         });
@@ -296,13 +304,13 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
         auto result = pending->handle.future.get();
         log_request_result(*pending, completion_request, result);
         if (!result) {
-            release_completion(*pending);
+            finalize_completion(*pending, result);
             callback(make_error_response(map_zoo_error_to_api_error(result.error())));
             return;
         }
 
         session->finish_success(*result);
-        release_completion(*pending);
+        finalize_completion(*pending, result);
         callback(make_stream_response(session));
         return;
     }
@@ -331,12 +339,12 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
 
         if (!result) {
             session->finish_error(map_zoo_error_to_api_error(result.error()));
-            release_completion(pending);
+            finalize_completion(pending, result);
             return;
         }
 
         session->finish_success(*result);
-        release_completion(pending);
+        finalize_completion(pending, result);
     });
 }
 

@@ -105,6 +105,7 @@ struct PendingChatCompletion {
     std::int64_t created = 0;
     std::string model;
     zoo::RequestHandle handle;
+    std::function<void(const zoo::Expected<zoo::Response>&)> on_result;
     std::function<void()> cancel;
     std::shared_ptr<CompletionLease> lease;
 };

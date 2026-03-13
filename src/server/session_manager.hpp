@@ -5,6 +5,7 @@
 #include "server/result.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -19,10 +20,14 @@ namespace zks::server {
 
 class SessionManager {
   public:
-    using AgentFactory =
-        std::function<Result<std::unique_ptr<zoo::Agent>>(const std::optional<std::string>&)>;
+    using CompletionStarter = std::function<
+        zoo::RequestHandle(std::vector<zoo::Message>,
+                           std::optional<std::function<void(std::string_view)>>)>;
+    using RequestCanceler = std::function<void(zoo::RequestId)>;
 
-    SessionManager(std::string model_id, SessionConfig config, AgentFactory agent_factory);
+    SessionManager(std::string model_id, SessionConfig config, std::string base_system_prompt,
+                   size_t max_history_messages, CompletionStarter completion_starter,
+                   RequestCanceler request_canceler);
 
     [[nodiscard]] SessionHealth health() const noexcept;
 
@@ -40,17 +45,19 @@ class SessionManager {
     struct SessionState {
         explicit SessionState(std::string session_id, std::string session_model,
                               std::int64_t created_at, std::int64_t expires_at_value,
-                              std::unique_ptr<zoo::Agent> owned_agent)
+                              std::vector<zoo::Message> seeded_history)
             : id(std::move(session_id)), model(std::move(session_model)), created(created_at),
-              last_used(created_at), expires_at(expires_at_value), agent(std::move(owned_agent)) {}
+              last_used(created_at), expires_at(expires_at_value),
+              history(std::move(seeded_history)) {}
 
         std::string id;
         std::string model;
         std::int64_t created = 0;
         std::int64_t last_used = 0;
         std::int64_t expires_at = 0;
-        std::unique_ptr<zoo::Agent> agent;
+        std::vector<zoo::Message> history;
         std::optional<zoo::RequestId> active_request;
+        bool closed = false;
         mutable std::mutex mutex;
     };
 
@@ -61,10 +68,16 @@ class SessionManager {
     void reap_expired_sessions_locked(std::int64_t now,
                                       std::vector<std::shared_ptr<SessionState>>& expired);
     void finish_request(const std::shared_ptr<SessionState>& session, zoo::RequestId request_id);
+    void finish_request(const std::shared_ptr<SessionState>& session, zoo::RequestId request_id,
+                        const zoo::Message& user_message,
+                        const zoo::Expected<zoo::Response>& result);
 
     std::string model_id_;
     SessionConfig config_;
-    AgentFactory agent_factory_;
+    std::string base_system_prompt_;
+    size_t max_history_messages_ = 0;
+    CompletionStarter completion_starter_;
+    RequestCanceler request_canceler_;
     std::atomic<std::uint64_t> next_session_id_{1};
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<SessionState>> sessions_;

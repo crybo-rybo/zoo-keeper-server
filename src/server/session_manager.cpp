@@ -1,6 +1,7 @@
 #include "server/session_manager.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <iostream>
 #include <utility>
 #include <vector>
@@ -14,6 +15,51 @@ std::int64_t now_seconds() {
         .count();
 }
 
+std::string combine_system_prompts(const std::string& base_prompt,
+                                   const std::optional<std::string>& request_prompt) {
+    if (base_prompt.empty()) {
+        return request_prompt.value_or("");
+    }
+    if (!request_prompt.has_value() || request_prompt->empty()) {
+        return base_prompt;
+    }
+    return base_prompt + "\n\n" + *request_prompt;
+}
+
+std::vector<zoo::Message> make_initial_history(const std::string& base_prompt,
+                                               const std::optional<std::string>& request_prompt) {
+    const std::string effective_prompt = combine_system_prompts(base_prompt, request_prompt);
+    if (effective_prompt.empty()) {
+        return {};
+    }
+    return {zoo::Message::system(effective_prompt)};
+}
+
+void trim_history_to_fit(std::vector<zoo::Message>& messages, size_t max_history_messages) {
+    const size_t system_offset =
+        (!messages.empty() && messages.front().role == zoo::Role::System) ? 1u : 0u;
+
+    if (messages.size() <= system_offset + max_history_messages) {
+        return;
+    }
+
+    size_t erase_end = messages.size() - max_history_messages;
+    if (erase_end < system_offset) {
+        erase_end = system_offset;
+    }
+
+    while (erase_end < messages.size() && messages[erase_end].role != zoo::Role::User) {
+        ++erase_end;
+    }
+
+    if (erase_end <= system_offset) {
+        return;
+    }
+
+    messages.erase(messages.begin() + static_cast<std::ptrdiff_t>(system_offset),
+                   messages.begin() + static_cast<std::ptrdiff_t>(erase_end));
+}
+
 void log_session_event(std::string_view event, std::string_view session_id, std::string_view detail) {
     std::clog << "[session] event=" << event << " session_id=" << session_id
               << " detail=\"" << detail << "\"" << '\n';
@@ -21,8 +67,15 @@ void log_session_event(std::string_view event, std::string_view session_id, std:
 
 } // namespace
 
-SessionManager::SessionManager(std::string model_id, SessionConfig config, AgentFactory agent_factory)
-    : model_id_(std::move(model_id)), config_(config), agent_factory_(std::move(agent_factory)) {}
+SessionManager::SessionManager(std::string model_id, SessionConfig config,
+                               std::string base_system_prompt, size_t max_history_messages,
+                               CompletionStarter completion_starter,
+                               RequestCanceler request_canceler)
+    : model_id_(std::move(model_id)), config_(config),
+      base_system_prompt_(std::move(base_system_prompt)),
+      max_history_messages_(max_history_messages),
+      completion_starter_(std::move(completion_starter)),
+      request_canceler_(std::move(request_canceler)) {}
 
 bool SessionManager::enabled() const noexcept {
     return config_.enabled();
@@ -52,7 +105,11 @@ void SessionManager::reap_expired_sessions_locked(
         bool should_expire = false;
         {
             std::lock_guard<std::mutex> session_lock(session->mutex);
-            should_expire = !session->active_request.has_value() && session->expires_at <= now;
+            should_expire =
+                !session->closed && !session->active_request.has_value() && session->expires_at <= now;
+            if (should_expire) {
+                session->closed = true;
+            }
         }
 
         if (!should_expire) {
@@ -91,20 +148,15 @@ ApiResult<SessionSummary> SessionManager::create_session(const SessionCreateRequ
 
     for (const auto& expired_session : expired) {
         log_session_event("expired", expired_session->id, "idle timeout reached");
-        expired_session->agent->stop();
-    }
-
-    auto agent_result = agent_factory_(request.system_prompt);
-    if (!agent_result) {
-        return std::unexpected(server_error(agent_result.error(), "session_create_failed"));
     }
 
     auto created = now_seconds();
     auto expires_at = created + static_cast<std::int64_t>(config_.idle_ttl_seconds);
     auto session_id =
         "sess-" + std::to_string(next_session_id_.fetch_add(1, std::memory_order_relaxed));
-    auto session = std::make_shared<SessionState>(session_id, model_id_, created, expires_at,
-                                                  std::move(*agent_result));
+    auto session = std::make_shared<SessionState>(
+        session_id, model_id_, created, expires_at,
+        make_initial_history(base_system_prompt_, request.system_prompt));
 
     expired.clear();
     {
@@ -124,7 +176,6 @@ ApiResult<SessionSummary> SessionManager::create_session(const SessionCreateRequ
 
     for (const auto& expired_session : expired) {
         log_session_event("expired", expired_session->id, "idle timeout reached");
-        expired_session->agent->stop();
     }
 
     log_session_event("created", session_id, "session ready");
@@ -151,7 +202,6 @@ ApiResult<SessionSummary> SessionManager::get_session(std::string_view session_i
 
     for (const auto& expired_session : expired) {
         log_session_event("expired", expired_session->id, "idle timeout reached");
-        expired_session->agent->stop();
     }
 
     return snapshot_session(*session);
@@ -177,13 +227,13 @@ ApiResult<void> SessionManager::delete_session(std::string_view session_id) {
     std::optional<zoo::RequestId> request_id;
     {
         std::lock_guard<std::mutex> session_lock(session->mutex);
+        session->closed = true;
         request_id = session->active_request;
     }
 
     if (request_id.has_value()) {
-        session->agent->cancel(*request_id);
+        request_canceler_(*request_id);
     }
-    session->agent->stop();
     log_session_event("deleted", session->id, "session removed");
     return {};
 }
@@ -222,19 +272,26 @@ ApiResult<PendingChatCompletion> SessionManager::start_completion(
 
     for (const auto& expired_session : expired) {
         log_session_event("expired", expired_session->id, "idle timeout reached");
-        expired_session->agent->stop();
     }
 
     std::int64_t started_at = now_seconds();
+    const zoo::Message user_message = request.messages.front();
+    std::vector<zoo::Message> full_messages;
     zoo::RequestHandle handle;
     {
         std::lock_guard<std::mutex> session_lock(session->mutex);
+        if (session->closed) {
+            return std::unexpected(
+                not_found_error("Unknown session: " + *request.session_id, "session_not_found"));
+        }
         if (session->active_request.has_value()) {
             return std::unexpected(
                 conflict_error("Session already has an active request", "session_busy"));
         }
 
-        handle = session->agent->chat(request.messages.front(), std::move(callback));
+        full_messages = session->history;
+        full_messages.push_back(user_message);
+        handle = completion_starter_(std::move(full_messages), std::move(callback));
         session->active_request = handle.id;
         session->last_used = started_at;
         session->expires_at = started_at + static_cast<std::int64_t>(config_.idle_ttl_seconds);
@@ -250,7 +307,11 @@ ApiResult<PendingChatCompletion> SessionManager::start_completion(
         started_at,
         model_id_,
         std::move(handle),
-        [session, request_id = session->active_request.value()] { session->agent->cancel(request_id); },
+        [this, session, request_id = session->active_request.value(), user_message](
+            const zoo::Expected<zoo::Response>& result) {
+            finish_request(session, request_id, user_message, result);
+        },
+        [this, request_id = session->active_request.value()] { request_canceler_(request_id); },
         std::move(lease),
     };
 }
@@ -260,6 +321,25 @@ void SessionManager::finish_request(const std::shared_ptr<SessionState>& session
     std::lock_guard<std::mutex> lock(session->mutex);
     if (!session->active_request.has_value() || *session->active_request != request_id) {
         return;
+    }
+
+    session->active_request.reset();
+    session->last_used = now_seconds();
+    session->expires_at = session->last_used + static_cast<std::int64_t>(config_.idle_ttl_seconds);
+}
+
+void SessionManager::finish_request(const std::shared_ptr<SessionState>& session,
+                                    zoo::RequestId request_id, const zoo::Message& user_message,
+                                    const zoo::Expected<zoo::Response>& result) {
+    std::lock_guard<std::mutex> lock(session->mutex);
+    if (!session->active_request.has_value() || *session->active_request != request_id) {
+        return;
+    }
+
+    if (!session->closed && result) {
+        session->history.push_back(user_message);
+        session->history.push_back(zoo::Message::assistant(result->text));
+        trim_history_to_fit(session->history, max_history_messages_);
     }
 
     session->active_request.reset();
@@ -282,12 +362,12 @@ void SessionManager::stop() {
         std::optional<zoo::RequestId> request_id;
         {
             std::lock_guard<std::mutex> session_lock(session->mutex);
+            session->closed = true;
             request_id = session->active_request;
         }
         if (request_id.has_value()) {
-            session->agent->cancel(*request_id);
+            request_canceler_(*request_id);
         }
-        session->agent->stop();
     }
 }
 
