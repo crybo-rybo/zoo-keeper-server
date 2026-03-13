@@ -74,6 +74,26 @@ ApiResult<SessionSummary> SessionManager::create_session(const SessionCreateRequ
             invalid_request_error("Unknown model: " + request.model, "model", "invalid_model"));
     }
 
+    std::vector<std::shared_ptr<SessionState>> expired;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_) {
+            return std::unexpected(
+                service_unavailable_error("Server runtime is stopping", "agent_not_ready"));
+        }
+
+        reap_expired_sessions_locked(now_seconds(), expired);
+        if (sessions_.size() >= config_.max_sessions) {
+            return std::unexpected(service_unavailable_error(
+                "Session capacity reached", "session_capacity_reached"));
+        }
+    }
+
+    for (const auto& expired_session : expired) {
+        log_session_event("expired", expired_session->id, "idle timeout reached");
+        expired_session->agent->stop();
+    }
+
     auto agent_result = agent_factory_(request.system_prompt);
     if (!agent_result) {
         return std::unexpected(server_error(agent_result.error(), "session_create_failed"));
@@ -86,7 +106,7 @@ ApiResult<SessionSummary> SessionManager::create_session(const SessionCreateRequ
     auto session = std::make_shared<SessionState>(session_id, model_id_, created, expires_at,
                                                   std::move(*agent_result));
 
-    std::vector<std::shared_ptr<SessionState>> expired;
+    expired.clear();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_) {

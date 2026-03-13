@@ -5,6 +5,7 @@
 #include "server/streaming.hpp"
 
 #include <chrono>
+#include <iostream>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -13,6 +14,34 @@
 
 namespace zks::server {
 namespace {
+
+void log_request_start(const PendingChatCompletion& pending, const ChatCompletionRequest& request) {
+    std::clog << "[request] event=start completion_id=" << pending.id << " model=" << pending.model
+              << " stream=" << (request.stream ? "true" : "false");
+    if (request.session_id.has_value()) {
+        std::clog << " session_id=" << *request.session_id;
+    }
+    std::clog << '\n';
+}
+
+void log_request_result(const PendingChatCompletion& pending, const ChatCompletionRequest& request,
+                        const zoo::Expected<zoo::Response>& result) {
+    std::clog << "[request] event=finish completion_id=" << pending.id << " model=" << pending.model;
+    if (request.session_id.has_value()) {
+        std::clog << " session_id=" << *request.session_id;
+    }
+
+    if (!result) {
+        std::clog << " status=error code=" << static_cast<int>(result.error().code)
+                  << " message=\"" << result.error().message << "\"\n";
+        return;
+    }
+
+    std::clog << " status=ok prompt_tokens=" << result->usage.prompt_tokens
+              << " completion_tokens=" << result->usage.completion_tokens
+              << " total_tokens=" << result->usage.total_tokens
+              << " latency_ms=" << result->metrics.latency_ms.count() << '\n';
+}
 
 class StreamingSession {
   public:
@@ -206,10 +235,12 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
         callback(make_error_response(pending.error()));
         return;
     }
+    log_request_start(*pending, request);
 
     auto result_status = pending->handle.future.wait_for(std::chrono::seconds(0));
     if (result_status == std::future_status::ready) {
         auto result = pending->handle.future.get();
+        log_request_result(*pending, request, result);
         if (!result) {
             callback(make_error_response(map_zoo_error_to_api_error(result.error())));
             return;
@@ -220,8 +251,9 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
     }
 
     runtime->spawn_background(
-        [callback = std::move(callback), pending = std::move(*pending)]() mutable {
+        [callback = std::move(callback), pending = std::move(*pending), request]() mutable {
             auto result = pending.handle.future.get();
+            log_request_result(pending, request, result);
             if (!result) {
                 callback(make_error_response(map_zoo_error_to_api_error(result.error())));
                 return;
@@ -244,6 +276,7 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
         callback(make_error_response(pending.error()));
         return;
     }
+    log_request_start(*pending, completion_request);
 
     session->set_metadata(pending->id, pending->created, pending->model);
     session->set_cancel_callback(pending->cancel);
@@ -251,6 +284,7 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
     auto ready_status = pending->handle.future.wait_for(std::chrono::seconds(0));
     if (ready_status == std::future_status::ready) {
         auto result = pending->handle.future.get();
+        log_request_result(*pending, completion_request, result);
         if (!result) {
             callback(make_error_response(map_zoo_error_to_api_error(result.error())));
             return;
@@ -273,8 +307,10 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
     callback(make_stream_response(session));
 
     runtime->spawn_background([session, weak_connection, callback_id, disconnect_registry,
-                               pending = std::move(*pending)]() mutable {
+                               pending = std::move(*pending),
+                               completion_request]() mutable {
         auto result = pending.handle.future.get();
+        log_request_result(pending, completion_request, result);
         if (callback_id.has_value()) {
             if (auto connection = weak_connection.lock()) {
                 disconnect_registry->clear(connection, *callback_id);
