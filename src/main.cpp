@@ -2,6 +2,9 @@
 #include "server/config.hpp"
 #include "server/health.hpp"
 #include "server/runtime.hpp"
+#ifdef ZKS_ENABLE_TEST_UI
+#include "server/test_ui.hpp"
+#endif
 
 #include <drogon/drogon.h>
 
@@ -29,6 +32,9 @@ int main(int argc, char** argv) {
     auto disconnect_registry = std::make_shared<zks::server::DisconnectRegistry>();
     zks::server::register_health_routes(*runtime_result);
     zks::server::register_api_routes(*runtime_result, disconnect_registry);
+#ifdef ZKS_ENABLE_TEST_UI
+    zks::server::register_test_ui_routes(*runtime_result);
+#endif
 
     drogon::app()
         .addListener(config.bind_address, config.port)

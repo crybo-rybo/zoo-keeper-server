@@ -19,6 +19,7 @@ set(ZKS_ZOO_KEEPER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/zoo-keeper")
 set(ZKS_LLAMA_DIR "${ZKS_ZOO_KEEPER_DIR}/extern/llama.cpp")
 set(ZKS_DROGON_VERSION "v1.9.12" CACHE STRING
     "Pinned Drogon version for the embedded HTTP server build")
+option(ZKS_ENABLE_TEST_UI "Enable the test-only browser UI at /_test" OFF)
 set(ZKS_LIVE_SMOKE_MODEL "" CACHE FILEPATH
     "Path to a GGUF model used by the optional live smoke test")
 set(ZKS_LIVE_SMOKE_PROMPT "Reply with the single word: zoo." CACHE STRING
@@ -93,6 +94,12 @@ add_library(zks_server_core
     src/server/streaming.cpp
     src/server/health.cpp
 )
+if(ZKS_ENABLE_TEST_UI)
+    target_sources(zks_server_core PRIVATE
+        src/server/test_ui.cpp
+    )
+    target_compile_definitions(zks_server_core PUBLIC ZKS_ENABLE_TEST_UI=1)
+endif()
 target_compile_features(zks_server_core PUBLIC cxx_std_23)
 target_include_directories(zks_server_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -140,6 +147,14 @@ if(BUILD_TESTING)
     target_compile_features(zks_api_test PRIVATE cxx_std_23)
     target_link_libraries(zks_api_test PRIVATE zks_server_core)
 
+    if(ZKS_ENABLE_TEST_UI)
+        add_executable(zks_test_ui_test
+            tests/test_ui_test.cpp
+        )
+        target_compile_features(zks_test_ui_test PRIVATE cxx_std_23)
+        target_link_libraries(zks_test_ui_test PRIVATE zks_server_core)
+    endif()
+
     add_test(NAME baseline_link_smoke COMMAND zoo_keeper_link_smoke)
     set_tests_properties(baseline_link_smoke PROPERTIES
         PASS_REGULAR_EXPRESSION "Observed expected InvalidModelPath validation failure."
@@ -148,6 +163,9 @@ if(BUILD_TESTING)
     add_test(NAME config_parse_test COMMAND zks_config_test)
     add_test(NAME health_response_test COMMAND zks_health_test)
     add_test(NAME api_response_test COMMAND zks_api_test)
+    if(ZKS_ENABLE_TEST_UI)
+        add_test(NAME test_ui_response_test COMMAND zks_test_ui_test)
+    endif()
     add_test(
         NAME server_startup_missing_model
         COMMAND ${CMAKE_COMMAND}

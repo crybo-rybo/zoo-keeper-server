@@ -36,6 +36,13 @@ cmake -S . -B build
 cmake --build build --parallel
 ```
 
+To compile the test-only browser console at `/_test`, opt in explicitly:
+
+```bash
+cmake -S . -B build-test-ui -DZKS_ENABLE_TEST_UI=ON
+cmake --build build-test-ui --parallel
+```
+
 Defaults in this repo:
 
 - macOS: `ZOO_ENABLE_METAL=ON`
@@ -63,6 +70,10 @@ Start the server with the example config:
 
 The shipped config in [config/server.example.json](/Users/conorrybacki/Programs/zoo-keeper-server/config/server.example.json)
 must be updated with a real GGUF `model_path` before startup will succeed.
+
+If you built with `-DZKS_ENABLE_TEST_UI=ON`, a test-only browser console is
+also available at `http://127.0.0.1:8080/_test`. It uses the same in-process
+routes as the API and is omitted entirely from default builds.
 
 Config fields:
 
