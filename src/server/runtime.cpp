@@ -51,7 +51,7 @@ void ServerRuntime::stop() {
     }
 
     for (auto& task : tasks) {
-        task.wait();
+        task.get();
     }
 }
 

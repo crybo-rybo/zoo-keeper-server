@@ -147,6 +147,12 @@ if(BUILD_TESTING)
     target_compile_features(zks_api_test PRIVATE cxx_std_23)
     target_link_libraries(zks_api_test PRIVATE zks_server_core)
 
+    add_executable(zks_runtime_test
+        tests/runtime_test.cpp
+    )
+    target_compile_features(zks_runtime_test PRIVATE cxx_std_23)
+    target_link_libraries(zks_runtime_test PRIVATE zks_server_core)
+
     if(ZKS_ENABLE_TEST_UI)
         add_executable(zks_test_ui_test
             tests/test_ui_test.cpp
@@ -163,6 +169,7 @@ if(BUILD_TESTING)
     add_test(NAME config_parse_test COMMAND zks_config_test)
     add_test(NAME health_response_test COMMAND zks_health_test)
     add_test(NAME api_response_test COMMAND zks_api_test)
+    add_test(NAME runtime_stop_test COMMAND zks_runtime_test)
     if(ZKS_ENABLE_TEST_UI)
         add_test(NAME test_ui_response_test COMMAND zks_test_ui_test)
     endif()

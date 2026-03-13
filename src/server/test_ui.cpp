@@ -1075,10 +1075,17 @@ drogon::HttpResponsePtr make_test_ui_response(const HealthSnapshot& snapshot) {
 }
 
 void register_test_ui_routes(const std::shared_ptr<const ServerRuntime>& runtime) {
+    std::weak_ptr<const ServerRuntime> weak_runtime = runtime;
     drogon::app().registerHandler(
         "/_test",
-        [runtime](const drogon::HttpRequestPtr&,
-                  std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+        [weak_runtime](const drogon::HttpRequestPtr&,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            auto runtime = weak_runtime.lock();
+            if (!runtime) {
+                callback(make_test_ui_response({false, "", {}}));
+                return;
+            }
+
             callback(make_test_ui_response(runtime->health_snapshot()));
         },
         {drogon::Get});

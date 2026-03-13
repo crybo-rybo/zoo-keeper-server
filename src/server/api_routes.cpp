@@ -15,6 +15,12 @@
 namespace zks::server {
 namespace {
 
+void release_completion(const PendingChatCompletion& pending) {
+    if (pending.lease) {
+        pending.lease->release();
+    }
+}
+
 void log_request_start(const PendingChatCompletion& pending, const ChatCompletionRequest& request) {
     std::clog << "[request] event=start completion_id=" << pending.id << " model=" << pending.model
               << " stream=" << (request.stream ? "true" : "false");
@@ -242,9 +248,11 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
         auto result = pending->handle.future.get();
         log_request_result(*pending, request, result);
         if (!result) {
+            release_completion(*pending);
             callback(make_error_response(map_zoo_error_to_api_error(result.error())));
             return;
         }
+        release_completion(*pending);
         callback(
             make_chat_completion_response(pending->id, pending->created, pending->model, *result));
         return;
@@ -255,10 +263,12 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
             auto result = pending.handle.future.get();
             log_request_result(pending, request, result);
             if (!result) {
+                release_completion(pending);
                 callback(make_error_response(map_zoo_error_to_api_error(result.error())));
                 return;
             }
 
+            release_completion(pending);
             callback(
                 make_chat_completion_response(pending.id, pending.created, pending.model, *result));
         });
@@ -286,11 +296,13 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
         auto result = pending->handle.future.get();
         log_request_result(*pending, completion_request, result);
         if (!result) {
+            release_completion(*pending);
             callback(make_error_response(map_zoo_error_to_api_error(result.error())));
             return;
         }
 
         session->finish_success(*result);
+        release_completion(*pending);
         callback(make_stream_response(session));
         return;
     }
@@ -319,10 +331,12 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
 
         if (!result) {
             session->finish_error(map_zoo_error_to_api_error(result.error()));
+            release_completion(pending);
             return;
         }
 
         session->finish_success(*result);
+        release_completion(pending);
     });
 }
 
@@ -378,26 +392,45 @@ void DisconnectRegistry::handle_connection_event(const trantor::TcpConnectionPtr
 
 void register_api_routes(const std::shared_ptr<ServerRuntime>& runtime,
                          const std::shared_ptr<DisconnectRegistry>& disconnect_registry) {
+    std::weak_ptr<ServerRuntime> weak_runtime = runtime;
     drogon::app().registerHandler(
         "/v1/models",
-        [runtime](const drogon::HttpRequestPtr&,
-                  std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+        [weak_runtime](const drogon::HttpRequestPtr&,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            auto runtime = weak_runtime.lock();
+            if (!runtime) {
+                callback(make_error_response(
+                    service_unavailable_error("Server runtime is not ready", "not_ready")));
+                return;
+            }
             callback(make_models_response(runtime->chat_service().model_id()));
         },
         {drogon::Get});
 
     drogon::app().registerHandler(
         "/v1/tools",
-        [runtime](const drogon::HttpRequestPtr&,
-                  std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+        [weak_runtime](const drogon::HttpRequestPtr&,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            auto runtime = weak_runtime.lock();
+            if (!runtime) {
+                callback(make_error_response(
+                    service_unavailable_error("Server runtime is not ready", "not_ready")));
+                return;
+            }
             callback(make_tools_response(runtime->chat_service().tools()));
         },
         {drogon::Get});
 
     drogon::app().registerHandler(
         "/v1/sessions",
-        [runtime](const drogon::HttpRequestPtr& request,
-                  std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+        [weak_runtime](const drogon::HttpRequestPtr& request,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            auto runtime = weak_runtime.lock();
+            if (!runtime) {
+                callback(make_error_response(
+                    service_unavailable_error("Server runtime is not ready", "not_ready")));
+                return;
+            }
             auto parsed_request = parse_session_create_request(request->body());
             if (!parsed_request) {
                 callback(make_error_response(parsed_request.error()));
@@ -416,9 +449,15 @@ void register_api_routes(const std::shared_ptr<ServerRuntime>& runtime,
 
     drogon::app().registerHandler(
         "/v1/sessions/{session-id}",
-        [runtime](const drogon::HttpRequestPtr&,
-                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
-                  const std::string& session_id) {
+        [weak_runtime](const drogon::HttpRequestPtr&,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& session_id) {
+            auto runtime = weak_runtime.lock();
+            if (!runtime) {
+                callback(make_error_response(
+                    service_unavailable_error("Server runtime is not ready", "not_ready")));
+                return;
+            }
             auto session = runtime->chat_service().get_session(session_id);
             if (!session) {
                 callback(make_error_response(session.error()));
@@ -431,9 +470,15 @@ void register_api_routes(const std::shared_ptr<ServerRuntime>& runtime,
 
     drogon::app().registerHandler(
         "/v1/sessions/{session-id}",
-        [runtime](const drogon::HttpRequestPtr&,
-                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
-                  const std::string& session_id) {
+        [weak_runtime](const drogon::HttpRequestPtr&,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& session_id) {
+            auto runtime = weak_runtime.lock();
+            if (!runtime) {
+                callback(make_error_response(
+                    service_unavailable_error("Server runtime is not ready", "not_ready")));
+                return;
+            }
             auto deleted = runtime->chat_service().delete_session(session_id);
             if (!deleted) {
                 callback(make_error_response(deleted.error()));
@@ -446,9 +491,15 @@ void register_api_routes(const std::shared_ptr<ServerRuntime>& runtime,
 
     drogon::app().registerHandler(
         "/v1/chat/completions",
-        [runtime,
+        [weak_runtime,
          disconnect_registry](const drogon::HttpRequestPtr& request,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            auto runtime = weak_runtime.lock();
+            if (!runtime) {
+                callback(make_error_response(
+                    service_unavailable_error("Server runtime is not ready", "not_ready")));
+                return;
+            }
             auto parsed_request = parse_chat_completion_request(request->body());
             if (!parsed_request) {
                 callback(make_error_response(parsed_request.error()));

@@ -45,5 +45,8 @@ int main(int argc, char** argv) {
         .disableSession()
         .run();
 
+    runtime_result->reset();
+    disconnect_registry.reset();
+
     return 0;
 }
