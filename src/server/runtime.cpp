@@ -5,15 +5,15 @@
 namespace zks::server {
 
 Result<std::shared_ptr<ServerRuntime>> ServerRuntime::create(ServerConfig config) {
-    auto agent_result = zoo::Agent::create(config.zoo_config);
-    if (!agent_result) {
-        return std::unexpected("Failed to create zoo::Agent: " + agent_result.error().to_string());
+    auto chat_service_result = ZooChatService::create(config);
+    if (!chat_service_result) {
+        return std::unexpected(chat_service_result.error());
     }
 
-    return std::make_shared<ServerRuntime>(std::move(config), std::move(*agent_result));
+    return std::make_shared<ServerRuntime>(std::move(config), std::move(*chat_service_result));
 }
 
-ServerRuntime::ServerRuntime(ServerConfig config, std::unique_ptr<zoo::Agent> agent)
-    : config_(std::move(config)), agent_(std::move(agent)) {}
+ServerRuntime::ServerRuntime(ServerConfig config, std::shared_ptr<ChatService> chat_service)
+    : config_(std::move(config)), chat_service_(std::move(chat_service)) {}
 
 } // namespace zks::server

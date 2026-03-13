@@ -11,7 +11,8 @@ The repo currently includes:
 - fetch and build Drogon as the embedded HTTP server framework
 - load a narrow JSON server config that embeds `zoo::Config`
 - bootstrap one shared `zoo::Agent` at process start
-- expose `GET /healthz`
+- expose `GET /healthz`, `GET /v1/models`, and `GET /v1/tools`
+- expose `POST /v1/chat/completions` with JSON responses or SSE when `stream=true`
 - build and run a zero-model link smoke executable
 - optionally run a live model smoke executable against a real GGUF file
 
@@ -55,6 +56,7 @@ The default CTest path covers:
 
 - config parsing
 - `/healthz` response shaping
+- OpenAI-like request parsing and response shaping
 - startup failure when the server config omits a valid model path
 - the zero-model library link smoke
 
@@ -68,10 +70,13 @@ The real server executable now expects a JSON config file:
 
 Update [`config/server.example.json`](/Users/conorrybacki/Programs/zoo-keeper-server/config/server.example.json#L1)
 with a real model path before running it. Once the process boots successfully,
-the first endpoint is:
+the server exposes:
 
 ```text
 GET /healthz
+GET /v1/models
+GET /v1/tools
+POST /v1/chat/completions
 ```
 
 Successful responses return HTTP `200` with a body shaped like:
@@ -84,6 +89,58 @@ Successful responses return HTTP `200` with a body shaped like:
     "id": "local-model"
   }
 }
+```
+
+`GET /v1/models` returns the single configured model id:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "local-model",
+      "object": "model",
+      "owned_by": "zoo-keeper-server"
+    }
+  ]
+}
+```
+
+`GET /v1/tools` returns the server-owned startup tool catalog. The initial MVP
+catalog may be empty:
+
+```json
+{
+  "object": "list",
+  "data": []
+}
+```
+
+Non-stream chat requests accept a narrow OpenAI-like JSON body:
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "local-model",
+    "messages": [
+      {"role": "user", "content": "Say hello in one short sentence."}
+    ]
+  }'
+```
+
+Streaming requests use server-sent events:
+
+```bash
+curl -N http://127.0.0.1:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "local-model",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "Say hello in one short sentence."}
+    ]
+  }'
 ```
 
 ## Link Smoke

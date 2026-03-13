@@ -84,8 +84,12 @@ endif()
 add_subdirectory(extern/zoo-keeper)
 
 add_library(zks_server_core
+    src/server/api_json.cpp
+    src/server/api_routes.cpp
+    src/server/chat_service.cpp
     src/server/config.cpp
     src/server/runtime.cpp
+    src/server/streaming.cpp
     src/server/health.cpp
 )
 target_compile_features(zks_server_core PUBLIC cxx_std_23)
@@ -129,6 +133,12 @@ if(BUILD_TESTING)
     target_compile_features(zks_health_test PRIVATE cxx_std_23)
     target_link_libraries(zks_health_test PRIVATE zks_server_core)
 
+    add_executable(zks_api_test
+        tests/api_test.cpp
+    )
+    target_compile_features(zks_api_test PRIVATE cxx_std_23)
+    target_link_libraries(zks_api_test PRIVATE zks_server_core)
+
     add_test(NAME baseline_link_smoke COMMAND zoo_keeper_link_smoke)
     set_tests_properties(baseline_link_smoke PROPERTIES
         PASS_REGULAR_EXPRESSION "Observed expected InvalidModelPath validation failure."
@@ -136,6 +146,7 @@ if(BUILD_TESTING)
 
     add_test(NAME config_parse_test COMMAND zks_config_test)
     add_test(NAME health_response_test COMMAND zks_health_test)
+    add_test(NAME api_response_test COMMAND zks_api_test)
     add_test(
         NAME server_startup_missing_model
         COMMAND ${CMAKE_COMMAND}

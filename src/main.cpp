@@ -1,3 +1,4 @@
+#include "server/api_routes.hpp"
 #include "server/config.hpp"
 #include "server/health.hpp"
 #include "server/runtime.hpp"
@@ -25,9 +26,15 @@ int main(int argc, char** argv) {
     }
 
     const auto& config = (*runtime_result)->config();
+    auto disconnect_registry = std::make_shared<zks::server::DisconnectRegistry>();
     zks::server::register_health_routes(*runtime_result);
+    zks::server::register_api_routes(*runtime_result, disconnect_registry);
 
-    drogon::app().addListener(config.bind_address, config.port)
+    drogon::app()
+        .addListener(config.bind_address, config.port)
+        .setConnectionCallback([disconnect_registry](const trantor::TcpConnectionPtr& connection) {
+            disconnect_registry->handle_connection_event(connection);
+        })
         .setLogLevel(trantor::Logger::kWarn)
         .disableSession()
         .run();
