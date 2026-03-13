@@ -6,7 +6,6 @@
 
 #include <chrono>
 #include <memory>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -193,9 +192,16 @@ drogon::HttpResponsePtr make_stream_response(const std::shared_ptr<StreamingSess
     return response;
 }
 
-void start_non_stream_completion(ChatService& service, const ChatCompletionRequest& request,
+drogon::HttpResponsePtr make_no_content_response() {
+    auto response = drogon::HttpResponse::newHttpResponse();
+    response->setStatusCode(drogon::k204NoContent);
+    return response;
+}
+
+void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
+                                 const ChatCompletionRequest& request,
                                  std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-    auto pending = service.start_completion(request);
+    auto pending = runtime->chat_service().start_completion(request);
     if (!pending) {
         callback(make_error_response(pending.error()));
         return;
@@ -213,16 +219,17 @@ void start_non_stream_completion(ChatService& service, const ChatCompletionReque
         return;
     }
 
-    std::thread([callback = std::move(callback), pending = std::move(*pending)]() mutable {
-        auto result = pending.handle.future.get();
-        if (!result) {
-            callback(make_error_response(map_zoo_error_to_api_error(result.error())));
-            return;
-        }
+    runtime->spawn_background(
+        [callback = std::move(callback), pending = std::move(*pending)]() mutable {
+            auto result = pending.handle.future.get();
+            if (!result) {
+                callback(make_error_response(map_zoo_error_to_api_error(result.error())));
+                return;
+            }
 
-        callback(
-            make_chat_completion_response(pending.id, pending.created, pending.model, *result));
-    }).detach();
+            callback(
+                make_chat_completion_response(pending.id, pending.created, pending.model, *result));
+        });
 }
 
 void start_stream_completion(const drogon::HttpRequestPtr& request,
@@ -230,10 +237,8 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
                              const std::shared_ptr<DisconnectRegistry>& disconnect_registry,
                              const ChatCompletionRequest& completion_request,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-    auto& service = runtime->chat_service();
-
     auto session = std::make_shared<StreamingSession>();
-    auto pending = service.start_completion(
+    auto pending = runtime->chat_service().start_completion(
         completion_request, [session](std::string_view token) { session->push_token(token); });
     if (!pending) {
         callback(make_error_response(pending.error()));
@@ -241,8 +246,7 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
     }
 
     session->set_metadata(pending->id, pending->created, pending->model);
-    session->set_cancel_callback(
-        [runtime, request_id = pending->handle.id] { runtime->chat_service().cancel(request_id); });
+    session->set_cancel_callback(pending->cancel);
 
     auto ready_status = pending->handle.future.wait_for(std::chrono::seconds(0));
     if (ready_status == std::future_status::ready) {
@@ -257,21 +261,24 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
         return;
     }
 
+    std::optional<DisconnectRegistry::CallbackId> callback_id;
     auto weak_connection = request->getConnectionPtr();
     if (auto connection = weak_connection.lock()) {
-        disconnect_registry->track(connection, [session, runtime, request_id = pending->handle.id] {
+        callback_id = disconnect_registry->track(connection, [session, cancel = pending->cancel] {
             session->close();
-            runtime->chat_service().cancel(request_id);
+            cancel();
         });
     }
 
     callback(make_stream_response(session));
 
-    std::thread([session, weak_connection, disconnect_registry,
-                 pending = std::move(*pending)]() mutable {
+    runtime->spawn_background([session, weak_connection, callback_id, disconnect_registry,
+                               pending = std::move(*pending)]() mutable {
         auto result = pending.handle.future.get();
-        if (auto connection = weak_connection.lock()) {
-            disconnect_registry->clear(connection);
+        if (callback_id.has_value()) {
+            if (auto connection = weak_connection.lock()) {
+                disconnect_registry->clear(connection, *callback_id);
+            }
         }
 
         if (!result) {
@@ -280,20 +287,31 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
         }
 
         session->finish_success(*result);
-    }).detach();
+    });
 }
 
 } // namespace
 
-void DisconnectRegistry::track(const trantor::TcpConnectionPtr& connection,
-                               std::function<void()> on_disconnect) {
+DisconnectRegistry::CallbackId
+DisconnectRegistry::track(const trantor::TcpConnectionPtr& connection,
+                          std::function<void()> on_disconnect) {
     std::lock_guard<std::mutex> lock(mutex_);
-    callbacks_[connection] = std::move(on_disconnect);
+    const auto callback_id = next_callback_id_++;
+    callbacks_[connection].emplace(callback_id, std::move(on_disconnect));
+    return callback_id;
 }
 
-void DisconnectRegistry::clear(const trantor::TcpConnectionPtr& connection) {
+void DisconnectRegistry::clear(const trantor::TcpConnectionPtr& connection, CallbackId callback_id) {
     std::lock_guard<std::mutex> lock(mutex_);
-    callbacks_.erase(connection);
+    auto it = callbacks_.find(connection);
+    if (it == callbacks_.end()) {
+        return;
+    }
+
+    it->second.erase(callback_id);
+    if (it->second.empty()) {
+        callbacks_.erase(it);
+    }
 }
 
 void DisconnectRegistry::handle_connection_event(const trantor::TcpConnectionPtr& connection) {
@@ -301,19 +319,24 @@ void DisconnectRegistry::handle_connection_event(const trantor::TcpConnectionPtr
         return;
     }
 
-    std::function<void()> callback;
+    std::vector<std::function<void()>> callbacks;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = callbacks_.find(connection);
         if (it == callbacks_.end()) {
             return;
         }
-        callback = std::move(it->second);
+
+        for (auto& [callback_id, callback] : it->second) {
+            callbacks.push_back(std::move(callback));
+        }
         callbacks_.erase(it);
     }
 
-    if (callback) {
-        callback();
+    for (auto& callback : callbacks) {
+        if (callback) {
+            callback();
+        }
     }
 }
 
@@ -336,6 +359,56 @@ void register_api_routes(const std::shared_ptr<ServerRuntime>& runtime,
         {drogon::Get});
 
     drogon::app().registerHandler(
+        "/v1/sessions",
+        [runtime](const drogon::HttpRequestPtr& request,
+                  std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            auto parsed_request = parse_session_create_request(request->body());
+            if (!parsed_request) {
+                callback(make_error_response(parsed_request.error()));
+                return;
+            }
+
+            auto session = runtime->chat_service().create_session(*parsed_request);
+            if (!session) {
+                callback(make_error_response(session.error()));
+                return;
+            }
+
+            callback(make_session_response(*session, drogon::k201Created));
+        },
+        {drogon::Post});
+
+    drogon::app().registerHandler(
+        "/v1/sessions/{session-id}",
+        [runtime](const drogon::HttpRequestPtr&,
+                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& session_id) {
+            auto session = runtime->chat_service().get_session(session_id);
+            if (!session) {
+                callback(make_error_response(session.error()));
+                return;
+            }
+
+            callback(make_session_response(*session));
+        },
+        {drogon::Get});
+
+    drogon::app().registerHandler(
+        "/v1/sessions/{session-id}",
+        [runtime](const drogon::HttpRequestPtr&,
+                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& session_id) {
+            auto deleted = runtime->chat_service().delete_session(session_id);
+            if (!deleted) {
+                callback(make_error_response(deleted.error()));
+                return;
+            }
+
+            callback(make_no_content_response());
+        },
+        {drogon::Delete});
+
+    drogon::app().registerHandler(
         "/v1/chat/completions",
         [runtime,
          disconnect_registry](const drogon::HttpRequestPtr& request,
@@ -347,8 +420,7 @@ void register_api_routes(const std::shared_ptr<ServerRuntime>& runtime,
             }
 
             if (!parsed_request->stream) {
-                start_non_stream_completion(runtime->chat_service(), *parsed_request,
-                                            std::move(callback));
+                start_non_stream_completion(runtime, *parsed_request, std::move(callback));
                 return;
             }
 

@@ -8,8 +8,12 @@ OpenAI-like API.
 Today the server:
 
 - vendors `zoo-keeper` in `extern/zoo-keeper`
-- boots one shared `zoo::Agent` at process start
-- serves `GET /healthz`, `GET /v1/models`, `GET /v1/tools`, and `POST /v1/chat/completions`
+- boots one shared stateless `zoo::Agent` at process start
+- can create optional in-memory per-session `zoo::Agent` instances for durable
+  conversation context
+- serves `GET /healthz`, `GET /v1/models`, `GET /v1/tools`,
+  `POST /v1/sessions`, `GET /v1/sessions/{id}`, `DELETE /v1/sessions/{id}`,
+  and `POST /v1/chat/completions`
 - supports JSON completions and SSE streaming
 - uses stateless request-scoped chat completion on top of the upstream
   `zoo::Agent::complete(...)` API
@@ -65,9 +69,18 @@ Config fields:
 - `bind_address`
 - `port`
 - `model_id`
+- `sessions`
 - `zoo`
 
 The `zoo` object is parsed directly as `zoo::Config`.
+The `sessions` object controls optional in-memory session support:
+
+- `max_sessions`
+- `idle_ttl_seconds`
+
+Set `sessions.max_sessions` to `0` to disable sessions entirely. This is the
+default because each active session owns its own `zoo::Agent` and model
+runtime.
 
 ## API
 
@@ -77,21 +90,43 @@ Available routes:
 GET  /healthz
 GET  /v1/models
 GET  /v1/tools
+POST /v1/sessions
+GET  /v1/sessions/{id}
+DELETE /v1/sessions/{id}
 POST /v1/chat/completions
 ```
 
 `/healthz` returns `200` when the runtime is ready and `503` otherwise.
 `/v1/models` returns the single configured model id. `/v1/tools` returns the
 server-owned tool catalog; it is currently empty by default.
+`/v1/sessions` manages in-memory process-lifetime chat sessions.
 
 `/v1/chat/completions` accepts a narrow OpenAI-like request shape:
 
 - `model` as a string
 - `messages` as an array of string-content messages
 - optional `stream: true` for SSE
+- optional `session_id` for server-owned session context
 
 Supported roles are `system`, `user`, `assistant`, and `tool`. The server does
 not currently accept client-supplied tools or extra OpenAI fields.
+
+When `session_id` is omitted, the request stays stateless and `messages[]`
+should contain the full request-scoped transcript.
+
+When `session_id` is present, `messages[]` must contain exactly one new `user`
+message. Prior conversation context comes from the server-owned session.
+
+Create a session:
+
+```bash
+curl -s http://127.0.0.1:8080/v1/sessions \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "local-model",
+    "system_prompt": "You are a concise assistant."
+  }'
+```
 
 Example request:
 
@@ -102,6 +137,20 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
     "model": "local-model",
     "messages": [
       {"role": "user", "content": "Say hello in one short sentence."}
+    ]
+  }'
+```
+
+Sessioned request:
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "local-model",
+    "session_id": "sess-1",
+    "messages": [
+      {"role": "user", "content": "Continue our conversation in one sentence."}
     ]
   }'
 ```

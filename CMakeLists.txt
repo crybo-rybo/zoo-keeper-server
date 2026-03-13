@@ -89,6 +89,7 @@ add_library(zks_server_core
     src/server/chat_service.cpp
     src/server/config.cpp
     src/server/runtime.cpp
+    src/server/session_manager.cpp
     src/server/streaming.cpp
     src/server/health.cpp
 )

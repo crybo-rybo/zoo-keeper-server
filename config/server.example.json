@@ -2,6 +2,10 @@
   "bind_address": "127.0.0.1",
   "port": 8080,
   "model_id": "local-model",
+  "sessions": {
+    "max_sessions": 0,
+    "idle_ttl_seconds": 900
+  },
   "zoo": {
     "model_path": "/absolute/path/to/model.gguf",
     "context_size": 8192,

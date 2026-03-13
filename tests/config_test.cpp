@@ -39,6 +39,10 @@ int main() {
   "bind_address": "127.0.0.1",
   "port": 8081,
   "model_id": "demo-model",
+  "sessions": {
+    "max_sessions": 3,
+    "idle_ttl_seconds": 600
+  },
   "zoo": {
     "model_path": "/tmp/demo.gguf",
     "max_tokens": 32
@@ -71,6 +75,7 @@ int main() {
 
     if (valid_config->bind_address != "127.0.0.1" || valid_config->port != 8081 ||
         valid_config->model_id != "demo-model" ||
+        valid_config->sessions.max_sessions != 3 || valid_config->sessions.idle_ttl_seconds != 600 ||
         valid_config->zoo_config.model_path != "/tmp/demo.gguf" ||
         valid_config->zoo_config.max_tokens != 32) {
         std::cerr << "Valid config parsed with unexpected values." << '\n';

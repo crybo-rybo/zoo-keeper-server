@@ -1,12 +1,25 @@
 #include "server/chat_service.hpp"
 
 #include <chrono>
+#include <iostream>
 #include <utility>
 
 namespace zks::server {
 namespace {
 
-std::vector<zoo::tools::ToolMetadata> make_startup_tools() {
+struct StartupTools {
+    std::vector<zoo::tools::ToolMetadata> metadata;
+    std::function<Result<void>(zoo::Agent&)> install = [](zoo::Agent&) -> Result<void> {
+        return {};
+    };
+};
+
+struct ConfiguredAgent {
+    std::unique_ptr<zoo::Agent> agent;
+    std::string request_system_prompt;
+};
+
+StartupTools make_startup_tools() {
     return {};
 }
 
@@ -21,36 +34,75 @@ std::string combine_system_prompts(const std::string& base_prompt,
     return base_prompt + "\n\n" + request_prompt;
 }
 
-} // namespace
+Result<ConfiguredAgent> create_configured_agent(const zoo::Config& base_config,
+                                                const StartupTools& tools,
+                                                const std::optional<std::string>& extra_prompt) {
+    zoo::Config config = base_config;
+    const std::string effective_prompt =
+        combine_system_prompts(base_config.system_prompt.value_or(""), extra_prompt.value_or(""));
+    config.system_prompt = effective_prompt.empty() ? std::nullopt
+                                                    : std::optional<std::string>(effective_prompt);
 
-Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfig& config) {
-    auto agent_result = zoo::Agent::create(config.zoo_config);
+    auto agent_result = zoo::Agent::create(config);
     if (!agent_result) {
         return std::unexpected("Failed to create zoo::Agent: " + agent_result.error().to_string());
     }
 
-    auto metadata = make_startup_tools();
     auto agent = std::move(*agent_result);
+    if (auto install_result = tools.install(*agent); !install_result) {
+        return std::unexpected(install_result.error());
+    }
 
-    std::string base_prompt = config.zoo_config.system_prompt.value_or("");
-    std::string request_system_prompt =
-        metadata.empty() ? base_prompt : agent->build_tool_system_prompt(base_prompt);
-    if (!metadata.empty()) {
+    std::string request_system_prompt = effective_prompt;
+    if (!tools.metadata.empty()) {
+        request_system_prompt = agent->build_tool_system_prompt(effective_prompt);
         agent->set_system_prompt(request_system_prompt);
     }
 
-    return std::make_shared<ZooChatService>(config.model_id, std::move(request_system_prompt),
-                                            std::move(metadata), std::move(agent));
+    return ConfiguredAgent{std::move(agent), std::move(request_system_prompt)};
+}
+
+std::int64_t now_seconds() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+} // namespace
+
+Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfig& config) {
+    const auto startup_tools = make_startup_tools();
+    auto stateless_result = create_configured_agent(config.zoo_config, startup_tools, std::nullopt);
+    if (!stateless_result) {
+        return std::unexpected(stateless_result.error());
+    }
+
+    auto session_manager = std::make_unique<SessionManager>(
+        config.model_id, config.sessions,
+        [base_config = config.zoo_config, startup_tools](
+            const std::optional<std::string>& extra_prompt) -> Result<std::unique_ptr<zoo::Agent>> {
+            auto agent_result = create_configured_agent(base_config, startup_tools, extra_prompt);
+            if (!agent_result) {
+                return std::unexpected(agent_result.error());
+            }
+            return std::move(agent_result->agent);
+        });
+
+    return std::make_shared<ZooChatService>(
+        config.model_id, std::move(stateless_result->request_system_prompt),
+        startup_tools.metadata, std::move(stateless_result->agent), std::move(session_manager));
 }
 
 ZooChatService::ZooChatService(std::string model_id, std::string request_system_prompt,
                                std::vector<zoo::tools::ToolMetadata> tool_metadata,
-                               std::unique_ptr<zoo::Agent> agent)
+                               std::unique_ptr<zoo::Agent> stateless_agent,
+                               std::unique_ptr<SessionManager> session_manager)
     : model_id_(std::move(model_id)), request_system_prompt_(std::move(request_system_prompt)),
-      tool_metadata_(std::move(tool_metadata)), agent_(std::move(agent)) {}
+      tool_metadata_(std::move(tool_metadata)), stateless_agent_(std::move(stateless_agent)),
+      session_manager_(std::move(session_manager)) {}
 
 bool ZooChatService::is_ready() const noexcept {
-    return static_cast<bool>(agent_) && agent_->is_running();
+    return static_cast<bool>(stateless_agent_) && stateless_agent_->is_running();
 }
 
 const std::string& ZooChatService::model_id() const noexcept {
@@ -61,34 +113,65 @@ const std::vector<zoo::tools::ToolMetadata>& ZooChatService::tools() const noexc
     return tool_metadata_;
 }
 
+SessionHealth ZooChatService::session_health() const noexcept {
+    return session_manager_ ? session_manager_->health() : SessionHealth{};
+}
+
 ApiResult<PendingChatCompletion>
 ZooChatService::start_completion(const ChatCompletionRequest& request,
                                  std::optional<std::function<void(std::string_view)>> callback) {
+    if (request.session_id.has_value()) {
+        return session_manager_->start_completion(request, next_completion_id_, std::move(callback));
+    }
+
     if (!is_ready()) {
         return std::unexpected(
             service_unavailable_error("Server runtime is not ready", "not_ready"));
     }
-
     if (request.model != model_id_) {
         return std::unexpected(
             invalid_request_error("Unknown model: " + request.model, "model", "invalid_model"));
     }
 
-    const auto created = std::chrono::duration_cast<std::chrono::seconds>(
-                             std::chrono::system_clock::now().time_since_epoch())
-                             .count();
+    auto handle = stateless_agent_->complete(prepare_messages(request), std::move(callback));
+    const auto request_id = handle.id;
+    const auto created = now_seconds();
     const auto completion_id =
         "chatcmpl-" + std::to_string(next_completion_id_.fetch_add(1, std::memory_order_relaxed));
-    auto handle = agent_->complete(prepare_messages(request), std::move(callback));
 
-    return PendingChatCompletion{completion_id, created, model_id_, std::move(handle)};
+    return PendingChatCompletion{
+        completion_id,
+        created,
+        model_id_,
+        std::move(handle),
+        [agent = stateless_agent_.get(), request_id] {
+            if (agent) {
+                agent->cancel(request_id);
+            }
+        },
+        std::make_shared<CompletionLease>(),
+    };
 }
 
-void ZooChatService::cancel(zoo::RequestId id) {
-    if (!agent_) {
-        return;
+ApiResult<SessionSummary> ZooChatService::create_session(const SessionCreateRequest& request) {
+    return session_manager_->create_session(request);
+}
+
+ApiResult<SessionSummary> ZooChatService::get_session(std::string_view session_id) {
+    return session_manager_->get_session(session_id);
+}
+
+ApiResult<void> ZooChatService::delete_session(std::string_view session_id) {
+    return session_manager_->delete_session(session_id);
+}
+
+void ZooChatService::stop() {
+    if (session_manager_) {
+        session_manager_->stop();
     }
-    agent_->cancel(id);
+    if (stateless_agent_) {
+        stateless_agent_->stop();
+    }
 }
 
 std::vector<zoo::Message>

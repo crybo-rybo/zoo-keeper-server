@@ -3,6 +3,7 @@
 #include "server/api_types.hpp"
 #include "server/config.hpp"
 #include "server/result.hpp"
+#include "server/session_manager.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -18,13 +19,6 @@
 
 namespace zks::server {
 
-struct PendingChatCompletion {
-    std::string id;
-    std::int64_t created = 0;
-    std::string model;
-    zoo::RequestHandle handle;
-};
-
 class ChatService {
   public:
     virtual ~ChatService() = default;
@@ -32,12 +26,17 @@ class ChatService {
     [[nodiscard]] virtual bool is_ready() const noexcept = 0;
     [[nodiscard]] virtual const std::string& model_id() const noexcept = 0;
     [[nodiscard]] virtual const std::vector<zoo::tools::ToolMetadata>& tools() const noexcept = 0;
+    [[nodiscard]] virtual SessionHealth session_health() const noexcept = 0;
 
     virtual ApiResult<PendingChatCompletion> start_completion(
         const ChatCompletionRequest& request,
         std::optional<std::function<void(std::string_view)>> callback = std::nullopt) = 0;
 
-    virtual void cancel(zoo::RequestId id) = 0;
+    virtual ApiResult<SessionSummary> create_session(const SessionCreateRequest& request) = 0;
+    virtual ApiResult<SessionSummary> get_session(std::string_view session_id) = 0;
+    virtual ApiResult<void> delete_session(std::string_view session_id) = 0;
+
+    virtual void stop() = 0;
 };
 
 class ZooChatService final : public ChatService {
@@ -46,17 +45,23 @@ class ZooChatService final : public ChatService {
 
     ZooChatService(std::string model_id, std::string request_system_prompt,
                    std::vector<zoo::tools::ToolMetadata> tool_metadata,
-                   std::unique_ptr<zoo::Agent> agent);
+                   std::unique_ptr<zoo::Agent> stateless_agent,
+                   std::unique_ptr<SessionManager> session_manager);
 
     [[nodiscard]] bool is_ready() const noexcept override;
     [[nodiscard]] const std::string& model_id() const noexcept override;
     [[nodiscard]] const std::vector<zoo::tools::ToolMetadata>& tools() const noexcept override;
+    [[nodiscard]] SessionHealth session_health() const noexcept override;
 
     ApiResult<PendingChatCompletion> start_completion(
         const ChatCompletionRequest& request,
         std::optional<std::function<void(std::string_view)>> callback = std::nullopt) override;
 
-    void cancel(zoo::RequestId id) override;
+    ApiResult<SessionSummary> create_session(const SessionCreateRequest& request) override;
+    ApiResult<SessionSummary> get_session(std::string_view session_id) override;
+    ApiResult<void> delete_session(std::string_view session_id) override;
+
+    void stop() override;
 
   private:
     [[nodiscard]] std::vector<zoo::Message>
@@ -65,7 +70,8 @@ class ZooChatService final : public ChatService {
     std::string model_id_;
     std::string request_system_prompt_;
     std::vector<zoo::tools::ToolMetadata> tool_metadata_;
-    std::unique_ptr<zoo::Agent> agent_;
+    std::unique_ptr<zoo::Agent> stateless_agent_;
+    std::unique_ptr<SessionManager> session_manager_;
     std::atomic<std::uint64_t> next_completion_id_{1};
 };
 

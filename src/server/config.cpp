@@ -40,6 +40,13 @@ std::string with_path_context(const std::filesystem::path& path, const std::stri
 
 } // namespace
 
+Result<void> SessionConfig::validate() const {
+    if (idle_ttl_seconds == 0) {
+        return std::unexpected("sessions.idle_ttl_seconds must be >= 1");
+    }
+    return {};
+}
+
 Result<void> ServerConfig::validate() const {
     if (bind_address.empty()) {
         return std::unexpected("bind_address cannot be empty");
@@ -49,6 +56,9 @@ Result<void> ServerConfig::validate() const {
     }
     if (model_id.empty()) {
         return std::unexpected("model_id cannot be empty");
+    }
+    if (auto validation = sessions.validate(); !validation) {
+        return std::unexpected(validation.error());
     }
     if (auto validation = zoo_config.validate(); !validation) {
         return std::unexpected(validation.error().to_string());
@@ -69,8 +79,8 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
         return std::unexpected(with_path_context(path, error.what()));
     }
 
-    static constexpr std::array<const char*, 4> kAllowedKeys = {
-        "bind_address", "port", "model_id", "zoo"};
+    static constexpr std::array<const char*, 5> kAllowedKeys = {
+        "bind_address", "port", "model_id", "sessions", "zoo"};
 
     if (auto unknown_key_check = reject_unknown_keys(json, "server config", kAllowedKeys);
         !unknown_key_check) {
@@ -96,6 +106,22 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
                 with_path_context(path, "Server config must contain required key: model_id"));
         }
         json.at("model_id").get_to(config.model_id);
+        if (auto it = json.find("sessions"); it != json.end()) {
+            static constexpr std::array<const char*, 2> kAllowedSessionKeys = {
+                "max_sessions", "idle_ttl_seconds"};
+            if (auto unknown_keys =
+                    reject_unknown_keys(*it, "sessions config", kAllowedSessionKeys);
+                !unknown_keys) {
+                return std::unexpected(with_path_context(path, unknown_keys.error()));
+            }
+
+            if (auto session_it = it->find("max_sessions"); session_it != it->end()) {
+                session_it->get_to(config.sessions.max_sessions);
+            }
+            if (auto session_it = it->find("idle_ttl_seconds"); session_it != it->end()) {
+                session_it->get_to(config.sessions.idle_ttl_seconds);
+            }
+        }
         if (!json.contains("zoo")) {
             return std::unexpected(
                 with_path_context(path, "Server config must contain required key: zoo"));

@@ -23,11 +23,12 @@ int fail(std::string_view message) {
 int main() {
     {
         auto parsed = zks::server::parse_chat_completion_request(
-            R"json({"model":"local-model","messages":[{"role":"system","content":"Be brief."},{"role":"user","content":"Hello"}],"stream":true})json");
+            R"json({"model":"local-model","session_id":"sess-1","messages":[{"role":"system","content":"Be brief."},{"role":"user","content":"Hello"}],"stream":true})json");
         if (!parsed) {
             return fail("Valid chat completion request unexpectedly failed.");
         }
         if (parsed->model != "local-model" || !parsed->stream || parsed->messages.size() != 2 ||
+            parsed->session_id != std::optional<std::string>{"sess-1"} ||
             parsed->messages[0].role != zoo::Role::System ||
             parsed->messages[1].role != zoo::Role::User) {
             return fail("Valid chat completion request parsed with unexpected values.");
@@ -59,6 +60,16 @@ int main() {
     }
 
     {
+        auto parsed =
+            zks::server::parse_session_create_request(
+                R"json({"model":"local-model","system_prompt":"Be concise."})json");
+        if (!parsed || parsed->model != "local-model" ||
+            parsed->system_prompt != std::optional<std::string>{"Be concise."}) {
+            return fail("Valid session create request parsed with unexpected values.");
+        }
+    }
+
+    {
         auto response = zks::server::make_models_response("local-model");
         const auto json = parse_body(response);
         if (response->getStatusCode() != drogon::k200OK || json.at("object") != "list" ||
@@ -81,6 +92,17 @@ int main() {
             json.at("data").size() != 1 ||
             json.at("data")[0].at("function").at("name") != "search_documents") {
             return fail("Tools response body mismatch.");
+        }
+    }
+
+    {
+        const auto response = zks::server::make_session_response(
+            zks::server::SessionSummary{"sess-1", "local-model", 10, 11, 20}, drogon::k201Created);
+        const auto json = parse_body(response);
+        if (response->getStatusCode() != drogon::k201Created || json.at("object") != "session" ||
+            json.at("id") != "sess-1" || json.at("model") != "local-model" ||
+            json.at("expires_at") != 20) {
+            return fail("Session response body mismatch.");
         }
     }
 
@@ -114,6 +136,17 @@ int main() {
         if (invalid_sequence.http_status != 400 ||
             invalid_sequence.type != "invalid_request_error") {
             return fail("InvalidMessageSequence error mapped incorrectly.");
+        }
+
+        const auto missing_session =
+            zks::server::not_found_error("missing", "session_not_found");
+        if (missing_session.http_status != 404 || missing_session.type != "not_found_error") {
+            return fail("not_found_error helper mapped incorrectly.");
+        }
+
+        const auto busy = zks::server::conflict_error("busy", "session_busy");
+        if (busy.http_status != 409 || busy.type != "conflict_error") {
+            return fail("conflict_error helper mapped incorrectly.");
         }
     }
 

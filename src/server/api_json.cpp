@@ -114,6 +114,15 @@ nlohmann::json make_chat_completion_body(std::string_view completion_id, std::in
                             {"total_tokens", response.usage.total_tokens}}}};
 }
 
+nlohmann::json make_session_body(const SessionSummary& summary) {
+    return nlohmann::json{{"id", summary.id},
+                          {"object", "session"},
+                          {"model", summary.model},
+                          {"created", summary.created},
+                          {"last_used", summary.last_used},
+                          {"expires_at", summary.expires_at}};
+}
+
 } // namespace
 
 ApiResult<ChatCompletionRequest> parse_chat_completion_request(std::string_view body) {
@@ -125,7 +134,8 @@ ApiResult<ChatCompletionRequest> parse_chat_completion_request(std::string_view 
             invalid_request_error(std::string("Invalid JSON body: ") + error.what(), "body"));
     }
 
-    static constexpr std::array<const char*, 3> kAllowedKeys = {"model", "messages", "stream"};
+    static constexpr std::array<const char*, 4> kAllowedKeys = {"model", "messages", "stream",
+                                                                "session_id"};
     if (auto unknown_keys = reject_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
         return std::unexpected(unknown_keys.error());
     }
@@ -149,6 +159,17 @@ ApiResult<ChatCompletionRequest> parse_chat_completion_request(std::string_view 
         }
         request.stream = it->get<bool>();
     }
+    if (auto it = json.find("session_id"); it != json.end()) {
+        if (!it->is_string()) {
+            return std::unexpected(
+                invalid_request_error("session_id must be a string", "session_id"));
+        }
+        request.session_id = it->get<std::string>();
+        if (request.session_id->empty()) {
+            return std::unexpected(
+                invalid_request_error("session_id must not be empty", "session_id"));
+        }
+    }
 
     const auto& messages_json = json.at("messages");
     if (messages_json.empty()) {
@@ -162,6 +183,41 @@ ApiResult<ChatCompletionRequest> parse_chat_completion_request(std::string_view 
         if (!parsed) {
             return std::unexpected(parsed.error());
         }
+    }
+
+    return request;
+}
+
+ApiResult<SessionCreateRequest> parse_session_create_request(std::string_view body) {
+    nlohmann::json json;
+    try {
+        json = nlohmann::json::parse(body.begin(), body.end());
+    } catch (const std::exception& error) {
+        return std::unexpected(
+            invalid_request_error(std::string("Invalid JSON body: ") + error.what(), "body"));
+    }
+
+    static constexpr std::array<const char*, 2> kAllowedKeys = {"model", "system_prompt"};
+    if (auto unknown_keys = reject_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
+        return std::unexpected(unknown_keys.error());
+    }
+
+    if (!json.contains("model") || !json.at("model").is_string()) {
+        return std::unexpected(invalid_request_error("model must be a string", "model"));
+    }
+
+    SessionCreateRequest request;
+    request.model = json.at("model").get<std::string>();
+    if (request.model.empty()) {
+        return std::unexpected(invalid_request_error("model must not be empty", "model"));
+    }
+
+    if (auto it = json.find("system_prompt"); it != json.end()) {
+        if (!it->is_string()) {
+            return std::unexpected(
+                invalid_request_error("system_prompt must be a string", "system_prompt"));
+        }
+        request.system_prompt = it->get<std::string>();
     }
 
     return request;
@@ -206,6 +262,11 @@ drogon::HttpResponsePtr make_tools_response(const std::vector<zoo::tools::ToolMe
     }
 
     return make_json_response(nlohmann::json{{"object", "list"}, {"data", std::move(data)}});
+}
+
+drogon::HttpResponsePtr make_session_response(const SessionSummary& summary,
+                                              drogon::HttpStatusCode status) {
+    return make_json_response(make_session_body(summary), status);
 }
 
 drogon::HttpResponsePtr make_chat_completion_response(std::string_view completion_id,
