@@ -2,7 +2,7 @@
   <img src="docs/images/logo.png" alt="Zoo Keeper Server Logo" width="200" />
 </p>
 
-<h1 align="center">zoo-keeper-server</h1>
+<h1 align="center">Zoo Keeper Server</h1>
 
 <p align="center">
   <b>A local LLM inference server with an OpenAI-compatible REST API.</b><br/>
