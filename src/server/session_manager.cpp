@@ -122,6 +122,21 @@ void SessionManager::reap_expired_sessions_locked(
     }
 }
 
+void SessionManager::reap_expired_sessions() {
+    std::vector<std::shared_ptr<SessionState>> expired;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_) {
+            return;
+        }
+        reap_expired_sessions_locked(now_seconds(), expired);
+    }
+
+    for (const auto& session : expired) {
+        log_session_event("expired", session->id, "idle timeout reached");
+    }
+}
+
 ApiResult<SessionSummary> SessionManager::create_session(const SessionCreateRequest& request) {
     if (!enabled()) {
         return std::unexpected(disabled_error());

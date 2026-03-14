@@ -1,6 +1,7 @@
 #include "server/api_json.hpp"
 #include "server/streaming.hpp"
 
+#include <chrono>
 #include <iostream>
 #include <string>
 
@@ -112,6 +113,9 @@ int main() {
         response.usage.prompt_tokens = 12;
         response.usage.completion_tokens = 4;
         response.usage.total_tokens = 16;
+        response.metrics.latency_ms = std::chrono::milliseconds{1240};
+        response.metrics.time_to_first_token_ms = std::chrono::milliseconds{180};
+        response.metrics.tokens_per_second = 22.4;
 
         auto http_response = zks::server::make_chat_completion_response("chatcmpl-1", 1234567890,
                                                                         "local-model", response);
@@ -122,12 +126,19 @@ int main() {
             json.at("usage").at("total_tokens") != 16) {
             return fail("Chat completion response body mismatch.");
         }
+        if (!json.contains("zoo_metrics") ||
+            json.at("zoo_metrics").at("latency_ms") != 1240 ||
+            json.at("zoo_metrics").at("time_to_first_token_ms") != 180 ||
+            json.at("zoo_metrics").at("tokens_per_second") != 22.4) {
+            return fail("Chat completion zoo_metrics mismatch.");
+        }
     }
 
     {
         const auto queue_full = zks::server::map_zoo_error_to_api_error(
             zoo::Error{zoo::ErrorCode::QueueFull, "queue full"});
-        if (queue_full.http_status != 503 || queue_full.type != "service_unavailable_error") {
+        if (queue_full.http_status != 503 || queue_full.type != "service_unavailable_error" ||
+            queue_full.code != std::optional<std::string>{"queue_full"}) {
             return fail("QueueFull error mapped incorrectly.");
         }
 
@@ -136,6 +147,41 @@ int main() {
         if (invalid_sequence.http_status != 400 ||
             invalid_sequence.type != "invalid_request_error") {
             return fail("InvalidMessageSequence error mapped incorrectly.");
+        }
+
+        const auto model_load_failed = zks::server::map_zoo_error_to_api_error(
+            zoo::Error{zoo::ErrorCode::ModelLoadFailed, "model not found"});
+        if (model_load_failed.http_status != 500 || model_load_failed.type != "server_error" ||
+            model_load_failed.code != std::optional<std::string>{"model_load_failed"}) {
+            return fail("ModelLoadFailed error mapped incorrectly.");
+        }
+
+        const auto inference_failed = zks::server::map_zoo_error_to_api_error(
+            zoo::Error{zoo::ErrorCode::InferenceFailed, "decode failed"});
+        if (inference_failed.http_status != 500 ||
+            inference_failed.code != std::optional<std::string>{"inference_failed"}) {
+            return fail("InferenceFailed error mapped incorrectly.");
+        }
+
+        const auto tool_not_found = zks::server::map_zoo_error_to_api_error(
+            zoo::Error{zoo::ErrorCode::ToolNotFound, "unknown tool"});
+        if (tool_not_found.http_status != 400 || tool_not_found.type != "invalid_request_error" ||
+            tool_not_found.code != std::optional<std::string>{"tool_not_found"}) {
+            return fail("ToolNotFound error mapped incorrectly.");
+        }
+
+        const auto tool_retries = zks::server::map_zoo_error_to_api_error(
+            zoo::Error{zoo::ErrorCode::ToolRetriesExhausted, "retries exceeded"});
+        if (tool_retries.http_status != 500 || tool_retries.type != "server_error" ||
+            tool_retries.code != std::optional<std::string>{"tool_retries_exhausted"}) {
+            return fail("ToolRetriesExhausted error mapped incorrectly.");
+        }
+
+        const auto template_failed = zks::server::map_zoo_error_to_api_error(
+            zoo::Error{zoo::ErrorCode::TemplateRenderFailed, "render error"});
+        if (template_failed.http_status != 500 ||
+            template_failed.code != std::optional<std::string>{"template_render_failed"}) {
+            return fail("TemplateRenderFailed error mapped incorrectly.");
         }
 
         const auto missing_session =

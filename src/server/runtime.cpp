@@ -6,6 +6,10 @@
 
 namespace zks::server {
 
+namespace {
+constexpr std::chrono::seconds kReaperInterval{60};
+} // namespace
+
 Result<std::shared_ptr<ServerRuntime>> ServerRuntime::create(ServerConfig config) {
     auto chat_service_result = ZooChatService::create(config);
     if (!chat_service_result) {
@@ -16,7 +20,11 @@ Result<std::shared_ptr<ServerRuntime>> ServerRuntime::create(ServerConfig config
 }
 
 ServerRuntime::ServerRuntime(ServerConfig config, std::shared_ptr<ChatService> chat_service)
-    : config_(std::move(config)), chat_service_(std::move(chat_service)) {}
+    : config_(std::move(config)), chat_service_(std::move(chat_service)) {
+    if (config_.sessions.enabled()) {
+        reaper_thread_ = std::thread([this]() { run_session_reaper(); });
+    }
+}
 
 ServerRuntime::~ServerRuntime() {
     stop();
@@ -46,12 +54,29 @@ void ServerRuntime::stop() {
         tasks.swap(background_tasks_);
     }
 
+    reaper_cv_.notify_all();
+    if (reaper_thread_.joinable()) {
+        reaper_thread_.join();
+    }
+
     if (chat_service_) {
         chat_service_->stop();
     }
 
     for (auto& task : tasks) {
         task.get();
+    }
+}
+
+void ServerRuntime::run_session_reaper() {
+    while (true) {
+        std::unique_lock<std::mutex> lock(tasks_mutex_);
+        reaper_cv_.wait_for(lock, kReaperInterval, [this] { return stopping_; });
+        if (stopping_) {
+            break;
+        }
+        lock.unlock();
+        chat_service_->reap_sessions();
     }
 }
 

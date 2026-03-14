@@ -111,7 +111,12 @@ nlohmann::json make_chat_completion_body(std::string_view completion_id, std::in
                           {"usage",
                            {{"prompt_tokens", response.usage.prompt_tokens},
                             {"completion_tokens", response.usage.completion_tokens},
-                            {"total_tokens", response.usage.total_tokens}}}};
+                            {"total_tokens", response.usage.total_tokens}}},
+                          {"zoo_metrics",
+                           {{"latency_ms", response.metrics.latency_ms.count()},
+                            {"time_to_first_token_ms",
+                             response.metrics.time_to_first_token_ms.count()},
+                            {"tokens_per_second", response.metrics.tokens_per_second}}}};
 }
 
 nlohmann::json make_session_body(const SessionSummary& summary) {
@@ -281,15 +286,48 @@ ApiError map_zoo_error_to_api_error(const zoo::Error& error) {
     using zoo::ErrorCode;
 
     switch (error.code) {
-    case ErrorCode::InvalidMessageSequence:
-        return invalid_request_error(error.message, "messages", "invalid_message_sequence");
+    // Configuration errors
+    case ErrorCode::InvalidConfig:
+    case ErrorCode::InvalidSamplingParams:
+        return invalid_request_error(error.message, std::nullopt, "invalid_config");
+    case ErrorCode::InvalidModelPath:
+    case ErrorCode::InvalidContextSize:
+    case ErrorCode::BackendInitFailed:
+    case ErrorCode::ModelLoadFailed:
+        return server_error(error.message, "model_load_failed");
+    // Backend errors
+    case ErrorCode::ContextCreationFailed:
+        return server_error(error.message, "context_creation_failed");
+    case ErrorCode::InferenceFailed:
+        return server_error(error.message, "inference_failed");
+    case ErrorCode::TokenizationFailed:
+        return server_error(error.message, "tokenization_failed");
+    // Engine errors
     case ErrorCode::ContextWindowExceeded:
         return invalid_request_error(error.message, "messages", "context_window_exceeded");
-    case ErrorCode::QueueFull:
-        return service_unavailable_error(error.message, "queue_full");
+    case ErrorCode::InvalidMessageSequence:
+        return invalid_request_error(error.message, "messages", "invalid_message_sequence");
+    case ErrorCode::TemplateRenderFailed:
+        return server_error(error.message, "template_render_failed");
+    // Runtime errors
     case ErrorCode::AgentNotRunning:
     case ErrorCode::RequestCancelled:
         return service_unavailable_error(error.message, "agent_not_ready");
+    case ErrorCode::RequestTimeout:
+        return server_error(error.message, "request_timeout");
+    case ErrorCode::QueueFull:
+        return service_unavailable_error(error.message, "queue_full");
+    // Tool errors
+    case ErrorCode::ToolNotFound:
+        return invalid_request_error(error.message, std::nullopt, "tool_not_found");
+    case ErrorCode::ToolExecutionFailed:
+    case ErrorCode::InvalidToolSignature:
+    case ErrorCode::InvalidToolSchema:
+    case ErrorCode::ToolValidationFailed:
+        return server_error(error.message, "tool_execution_failed");
+    case ErrorCode::ToolRetriesExhausted:
+    case ErrorCode::ToolLoopLimitReached:
+        return server_error(error.message, "tool_retries_exhausted");
     default:
         return server_error(error.to_string(), "runtime_error");
     }

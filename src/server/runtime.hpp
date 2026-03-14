@@ -4,12 +4,15 @@
 #include "server/config.hpp"
 #include "server/result.hpp"
 
+#include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <future>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace zks::server {
@@ -74,11 +77,14 @@ class ServerRuntime {
 
   private:
     void prune_background_tasks_locked();
+    void run_session_reaper();
 
     ServerConfig config_;
     std::shared_ptr<ChatService> chat_service_;
     std::mutex tasks_mutex_;
+    std::condition_variable reaper_cv_;
     std::vector<std::future<void>> background_tasks_;
+    std::thread reaper_thread_;
     bool stopping_ = false;
 };
 

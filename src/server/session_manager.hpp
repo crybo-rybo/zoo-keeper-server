@@ -31,6 +31,8 @@ class SessionManager {
 
     [[nodiscard]] SessionHealth health() const noexcept;
 
+    void reap_expired_sessions();
+
     ApiResult<SessionSummary> create_session(const SessionCreateRequest& request);
     ApiResult<SessionSummary> get_session(std::string_view session_id);
     ApiResult<void> delete_session(std::string_view session_id);

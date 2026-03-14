@@ -174,6 +174,12 @@ ApiResult<void> ZooChatService::delete_session(std::string_view session_id) {
     return session_manager_->delete_session(session_id);
 }
 
+void ZooChatService::reap_sessions() noexcept {
+    if (session_manager_) {
+        session_manager_->reap_expired_sessions();
+    }
+}
+
 void ZooChatService::stop() {
     if (session_manager_) {
         session_manager_->stop();

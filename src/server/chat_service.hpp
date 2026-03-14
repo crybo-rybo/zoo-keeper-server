@@ -36,6 +36,8 @@ class ChatService {
     virtual ApiResult<SessionSummary> get_session(std::string_view session_id) = 0;
     virtual ApiResult<void> delete_session(std::string_view session_id) = 0;
 
+    virtual void reap_sessions() noexcept {}
+
     virtual void stop() = 0;
 };
 
@@ -60,6 +62,8 @@ class ZooChatService final : public ChatService {
     ApiResult<SessionSummary> create_session(const SessionCreateRequest& request) override;
     ApiResult<SessionSummary> get_session(std::string_view session_id) override;
     ApiResult<void> delete_session(std::string_view session_id) override;
+
+    void reap_sessions() noexcept override;
 
     void stop() override;
 
