@@ -2,6 +2,7 @@
 
 #include "server/chat_service.hpp"
 #include "server/config.hpp"
+#include "server/metrics.hpp"
 #include "server/result.hpp"
 
 #include <chrono>
@@ -50,6 +51,12 @@ class ServerRuntime {
         return *chat_service_;
     }
 
+    [[nodiscard]] ServerMetrics& metrics() noexcept {
+        return metrics_;
+    }
+
+    [[nodiscard]] MetricsSnapshot metrics_snapshot() const;
+
     void stop();
 
     template <typename Func> void spawn_background(Func&& task) {
@@ -81,6 +88,7 @@ class ServerRuntime {
 
     ServerConfig config_;
     std::shared_ptr<ChatService> chat_service_;
+    ServerMetrics metrics_;
     std::mutex tasks_mutex_;
     std::condition_variable reaper_cv_;
     std::vector<std::future<void>> background_tasks_;

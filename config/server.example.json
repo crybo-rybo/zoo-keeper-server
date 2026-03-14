@@ -2,6 +2,7 @@
   "bind_address": "127.0.0.1",
   "port": 8080,
   "model_id": "local-model",
+  "api_key": null,
   "sessions": {
     "max_sessions": 1,
     "idle_ttl_seconds": 900

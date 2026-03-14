@@ -51,6 +51,10 @@ inline ApiError conflict_error(std::string message, std::optional<std::string> c
     return ApiError{409, std::move(message), "conflict_error", std::nullopt, std::move(code)};
 }
 
+inline ApiError auth_error(std::string message, std::optional<std::string> code = std::nullopt) {
+    return ApiError{401, std::move(message), "auth_error", std::nullopt, std::move(code)};
+}
+
 struct ChatCompletionRequest {
     std::string model;
     std::vector<zoo::Message> messages;

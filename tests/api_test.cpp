@@ -197,6 +197,45 @@ int main() {
     }
 
     {
+        zoo::Response response;
+        response.text = "I used a tool for that.";
+
+        zoo::ToolInvocation inv;
+        inv.id = "call-1";
+        inv.name = "search_documents";
+        inv.arguments_json = R"({"query":"test"})";
+        inv.status = zoo::ToolInvocationStatus::Succeeded;
+        inv.result_json = R"({"results":[]})";
+        response.tool_invocations.push_back(std::move(inv));
+
+        auto http_response = zks::server::make_chat_completion_response("chatcmpl-2", 1234567890,
+                                                                        "local-model", response);
+        const auto json = parse_body(http_response);
+        if (!json.contains("tool_invocations") || json.at("tool_invocations").size() != 1) {
+            return fail("tool_invocations missing or wrong size.");
+        }
+        const auto& tool_inv = json.at("tool_invocations")[0];
+        if (tool_inv.at("id") != "call-1" || tool_inv.at("name") != "search_documents" ||
+            tool_inv.at("status") != "succeeded" ||
+            !tool_inv.contains("result") || !tool_inv.contains("arguments")) {
+            return fail("tool_invocations content mismatch.");
+        }
+        if (!json.contains("tool_invocations") || json.at("tool_invocations").is_null()) {
+            return fail("tool_invocations must be present even when empty.");
+        }
+
+        zoo::Response empty_response;
+        auto http_empty = zks::server::make_chat_completion_response("chatcmpl-3", 1234567890,
+                                                                     "local-model", empty_response);
+        const auto json_empty = parse_body(http_empty);
+        if (!json_empty.contains("tool_invocations") ||
+            !json_empty.at("tool_invocations").is_array() ||
+            json_empty.at("tool_invocations").size() != 0) {
+            return fail("Empty tool_invocations must be an empty array.");
+        }
+    }
+
+    {
         const auto chunk = zks::server::make_chat_completion_chunk(
             "chatcmpl-1", 1234567890, "local-model", "Hello", true, std::nullopt);
         const auto finish = zks::server::make_chat_completion_chunk(

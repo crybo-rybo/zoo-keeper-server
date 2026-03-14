@@ -98,8 +98,35 @@ nlohmann::json make_tool_schema(const zoo::tools::ToolMetadata& metadata) {
                             {"parameters", metadata.parameters_schema}}}};
 }
 
+nlohmann::json make_tool_invocation_json(const zoo::ToolInvocation& inv) {
+    nlohmann::json j{{"id", inv.id},
+                     {"name", inv.name},
+                     {"status", zoo::to_string(inv.status)}};
+    try {
+        j["arguments"] = nlohmann::json::parse(inv.arguments_json);
+    } catch (...) {
+        j["arguments"] = inv.arguments_json;
+    }
+    if (inv.result_json.has_value()) {
+        try {
+            j["result"] = nlohmann::json::parse(*inv.result_json);
+        } catch (...) {
+            j["result"] = *inv.result_json;
+        }
+    }
+    if (inv.error.has_value()) {
+        j["error"] = inv.error->message;
+    }
+    return j;
+}
+
 nlohmann::json make_chat_completion_body(std::string_view completion_id, std::int64_t created,
                                          std::string_view model_id, const zoo::Response& response) {
+    nlohmann::json tool_invocations = nlohmann::json::array();
+    for (const auto& inv : response.tool_invocations) {
+        tool_invocations.push_back(make_tool_invocation_json(inv));
+    }
+
     return nlohmann::json{{"id", completion_id},
                           {"object", "chat.completion"},
                           {"created", created},
@@ -116,7 +143,8 @@ nlohmann::json make_chat_completion_body(std::string_view completion_id, std::in
                            {{"latency_ms", response.metrics.latency_ms.count()},
                             {"time_to_first_token_ms",
                              response.metrics.time_to_first_token_ms.count()},
-                            {"tokens_per_second", response.metrics.tokens_per_second}}}};
+                            {"tokens_per_second", response.metrics.tokens_per_second}}},
+                          {"tool_invocations", std::move(tool_invocations)}};
 }
 
 nlohmann::json make_session_body(const SessionSummary& summary) {

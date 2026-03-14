@@ -68,6 +68,16 @@ void ServerRuntime::stop() {
     }
 }
 
+MetricsSnapshot ServerRuntime::metrics_snapshot() const {
+    return MetricsSnapshot{
+        .requests_total = metrics_.requests_total(),
+        .requests_errors = metrics_.requests_errors(),
+        .active_sessions = chat_service_->session_health().active,
+        .model_id = config_.model_id,
+        .uptime_seconds = metrics_.uptime_seconds(),
+    };
+}
+
 void ServerRuntime::run_session_reaper() {
     while (true) {
         std::unique_lock<std::mutex> lock(tasks_mutex_);

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 
 #include <zoo/core/types.hpp>
@@ -25,6 +26,7 @@ struct ServerConfig {
     std::string bind_address = "127.0.0.1";
     uint16_t port = 8080;
     std::string model_id;
+    std::optional<std::string> api_key;
     SessionConfig sessions;
     zoo::Config zoo_config;
 

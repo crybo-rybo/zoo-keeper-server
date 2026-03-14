@@ -79,8 +79,8 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
         return std::unexpected(with_path_context(path, error.what()));
     }
 
-    static constexpr std::array<const char*, 5> kAllowedKeys = {
-        "bind_address", "port", "model_id", "sessions", "zoo"};
+    static constexpr std::array<const char*, 6> kAllowedKeys = {
+        "bind_address", "port", "model_id", "api_key", "sessions", "zoo"};
 
     if (auto unknown_key_check = reject_unknown_keys(json, "server config", kAllowedKeys);
         !unknown_key_check) {
@@ -106,6 +106,17 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
                 with_path_context(path, "Server config must contain required key: model_id"));
         }
         json.at("model_id").get_to(config.model_id);
+        if (auto it = json.find("api_key"); it != json.end()) {
+            if (!it->is_null()) {
+                if (!it->is_string()) {
+                    return std::unexpected(with_path_context(path, "api_key must be a string"));
+                }
+                std::string key = it->get<std::string>();
+                if (!key.empty()) {
+                    config.api_key = std::move(key);
+                }
+            }
+        }
         if (auto it = json.find("sessions"); it != json.end()) {
             static constexpr std::array<const char*, 2> kAllowedSessionKeys = {
                 "max_sessions", "idle_ttl_seconds"};
