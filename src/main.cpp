@@ -36,6 +36,9 @@ int main(int argc, char** argv) {
     zks::server::register_test_ui_routes(*runtime_result);
 #endif
 
+    std::clog << "zoo-keeper-server listening on " << config.bind_address << ":" << config.port
+              << '\n';
+
     drogon::app()
         .addListener(config.bind_address, config.port)
         .setConnectionCallback([disconnect_registry](const trantor::TcpConnectionPtr& connection) {

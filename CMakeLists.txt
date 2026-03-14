@@ -5,7 +5,7 @@ if(POLICY CMP0135)
     set(CMAKE_POLICY_DEFAULT_CMP0135 NEW)
 endif()
 
-project(zoo-keeper-server LANGUAGES CXX)
+project(zoo-keeper-server VERSION 0.0.1 LANGUAGES CXX)
 
 include(CTest)
 include(FetchContent)

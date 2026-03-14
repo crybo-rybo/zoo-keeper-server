@@ -9,8 +9,8 @@ Today the server:
 
 - vendors `zoo-keeper` in `extern/zoo-keeper`
 - boots one shared stateless `zoo::Agent` at process start
-- can create optional in-memory per-session `zoo::Agent` instances for durable
-  conversation context
+- can create optional in-memory sessions for durable conversation context (all
+  sessions share the single `zoo::Agent`)
 - serves `GET /healthz`, `GET /v1/models`, `GET /v1/tools`,
   `POST /v1/sessions`, `GET /v1/sessions/{id}`, `DELETE /v1/sessions/{id}`,
   and `POST /v1/chat/completions`
@@ -68,7 +68,7 @@ Start the server with the example config:
 ./build/zoo_keeper_server config/server.example.json
 ```
 
-The shipped config in [config/server.example.json](/Users/conorrybacki/Programs/zoo-keeper-server/config/server.example.json)
+The shipped config in [config/server.example.json](config/server.example.json)
 must be updated with a real GGUF `model_path` before startup will succeed.
 
 If you built with `-DZKS_ENABLE_TEST_UI=ON`, a test-only browser console is
@@ -90,8 +90,8 @@ The `sessions` object controls optional in-memory session support:
 - `idle_ttl_seconds`
 
 Set `sessions.max_sessions` to `0` to disable sessions entirely. This is the
-default because each active session owns its own `zoo::Agent` and model
-runtime.
+default because sessions are in-memory process-lifetime state with no
+persistence — enabling them is an explicit opt-in.
 
 ## API
 
@@ -179,6 +179,20 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
     ]
   }'
 ```
+
+## Known Limitations
+
+- **No authentication.** The server is designed as a trusted local backend. Do
+  not expose it directly to untrusted networks.
+- **Sessions are in-memory and process-lifetime only.** There is no persistence;
+  sessions are lost on restart.
+- **macOS + Metal + sessions: OOM during inference will abort the process.**
+  On macOS with Metal enabled, a device out-of-memory condition deep in
+  inference triggers a fatal abort in the upstream `llama.cpp` Metal backend
+  before `zoo-keeper` can surface a recoverable error. If you hit this, reduce
+  `n_gpu_layers` or `context_size`, or disable sessions (`max_sessions = 0`).
+  Tracked upstream in `crybo-rybo/zoo-keeper`; see
+  `docs/zoo-keeper-metal-oom-issue.md` for details.
 
 ## Smoke Executables
 

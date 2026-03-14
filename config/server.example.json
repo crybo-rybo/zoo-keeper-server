@@ -3,14 +3,14 @@
   "port": 8080,
   "model_id": "local-model",
   "sessions": {
-    "max_sessions": 0,
+    "max_sessions": 1,
     "idle_ttl_seconds": 900
   },
   "zoo": {
-    "model_path": "/absolute/path/to/model.gguf",
-    "context_size": 8192,
-    "n_gpu_layers": 0,
-    "max_tokens": 256,
+    "model_path": "/path/to/your/model.gguf",
+    "context_size": 2048,
+    "n_gpu_layers": -1,
+    "max_tokens": -1,
     "system_prompt": "You are a helpful assistant."
   }
 }
