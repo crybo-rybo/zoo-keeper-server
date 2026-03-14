@@ -255,11 +255,22 @@ drogon::HttpResponsePtr make_no_content_response() {
     return response;
 }
 
+void increment_zoo_error_metrics(ServerMetrics& metrics, const zoo::Error& error) {
+    if (error.code == zoo::ErrorCode::RequestCancelled) {
+        metrics.increment_cancelled();
+    } else if (error.code == zoo::ErrorCode::QueueFull) {
+        metrics.increment_queue_rejected();
+    }
+}
+
 void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
                                  const ChatCompletionRequest& request,
                                  std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
     auto pending = runtime->chat_service().start_completion(request);
     if (!pending) {
+        if (pending.error().code.has_value() && *pending.error().code == "queue_full") {
+            runtime->metrics().increment_queue_rejected();
+        }
         callback(make_error_response(pending.error()));
         return;
     }
@@ -270,6 +281,7 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
         auto result = pending->handle.future.get();
         log_request_result(*pending, request, result);
         if (!result) {
+            increment_zoo_error_metrics(runtime->metrics(), result.error());
             finalize_completion(*pending, result);
             callback(make_error_response(map_zoo_error_to_api_error(result.error())));
             return;
@@ -281,10 +293,12 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
     }
 
     runtime->spawn_background(
-        [callback = std::move(callback), pending = std::move(*pending), request]() mutable {
+        [callback = std::move(callback), pending = std::move(*pending), request,
+         runtime]() mutable {
             auto result = pending.handle.future.get();
             log_request_result(pending, request, result);
             if (!result) {
+                increment_zoo_error_metrics(runtime->metrics(), result.error());
                 finalize_completion(pending, result);
                 callback(make_error_response(map_zoo_error_to_api_error(result.error())));
                 return;
@@ -305,6 +319,9 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
     auto pending = runtime->chat_service().start_completion(
         completion_request, [session](std::string_view token) { session->push_token(token); });
     if (!pending) {
+        if (pending.error().code.has_value() && *pending.error().code == "queue_full") {
+            runtime->metrics().increment_queue_rejected();
+        }
         callback(make_error_response(pending.error()));
         return;
     }
@@ -318,6 +335,7 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
         auto result = pending->handle.future.get();
         log_request_result(*pending, completion_request, result);
         if (!result) {
+            increment_zoo_error_metrics(runtime->metrics(), result.error());
             finalize_completion(*pending, result);
             callback(make_error_response(map_zoo_error_to_api_error(result.error())));
             return;
@@ -332,17 +350,19 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
     std::optional<DisconnectRegistry::CallbackId> callback_id;
     auto weak_connection = request->getConnectionPtr();
     if (auto connection = weak_connection.lock()) {
-        callback_id = disconnect_registry->track(connection, [session, cancel = pending->cancel] {
-            session->close();
-            cancel();
-        });
+        callback_id = disconnect_registry->track(
+            connection, [session, cancel = pending->cancel, runtime] {
+                session->close();
+                cancel();
+                runtime->metrics().increment_stream_disconnects();
+            });
     }
 
     callback(make_stream_response(session));
 
     runtime->spawn_background([session, weak_connection, callback_id, disconnect_registry,
-                               pending = std::move(*pending),
-                               completion_request]() mutable {
+                               pending = std::move(*pending), completion_request,
+                               runtime]() mutable {
         auto result = pending.handle.future.get();
         log_request_result(pending, completion_request, result);
         if (callback_id.has_value()) {
@@ -352,6 +372,7 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
         }
 
         if (!result) {
+            increment_zoo_error_metrics(runtime->metrics(), result.error());
             session->finish_error(map_zoo_error_to_api_error(result.error()));
             finalize_completion(pending, result);
             return;
@@ -583,12 +604,15 @@ void register_api_routes(const std::shared_ptr<ServerRuntime>& runtime,
                 return;
             }
             const auto snapshot = runtime->metrics_snapshot();
-            with_metrics(runtime, std::move(callback))(
-                make_json_response(nlohmann::json{{"requests_total", snapshot.requests_total},
-                                                  {"requests_errors", snapshot.requests_errors},
-                                                  {"active_sessions", snapshot.active_sessions},
-                                                  {"model_id", snapshot.model_id},
-                                                  {"uptime_seconds", snapshot.uptime_seconds}}));
+            with_metrics(runtime, std::move(callback))(make_json_response(nlohmann::json{
+                {"requests_total", snapshot.requests_total},
+                {"requests_errors", snapshot.requests_errors},
+                {"requests_cancelled_total", snapshot.requests_cancelled_total},
+                {"requests_queue_rejected_total", snapshot.requests_queue_rejected_total},
+                {"stream_disconnects_total", snapshot.stream_disconnects_total},
+                {"active_sessions", snapshot.active_sessions},
+                {"model_id", snapshot.model_id},
+                {"uptime_seconds", snapshot.uptime_seconds}}));
         },
         {drogon::Get});
 }

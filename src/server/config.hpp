@@ -23,11 +23,20 @@ struct SessionConfig {
     [[nodiscard]] Result<void> validate() const;
 };
 
+struct HttpConfig {
+    int64_t client_max_body_size_bytes = 1048576;        // 1 MiB
+    int64_t client_max_memory_body_size_bytes = 65536;   // 64 KiB
+    int32_t idle_connection_timeout_seconds = 60;
+
+    [[nodiscard]] Result<void> validate() const;
+};
+
 struct ServerConfig {
     std::string bind_address = "127.0.0.1";
     uint16_t port = 8080;
     std::string model_id;
     std::optional<std::string> api_key;
+    HttpConfig http;
     SessionConfig sessions;
     zoo::Config zoo_config;
 

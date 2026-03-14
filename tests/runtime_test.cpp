@@ -1,5 +1,7 @@
 #include "server/runtime.hpp"
 
+#include "fake_chat_service.hpp"
+
 #include <atomic>
 #include <chrono>
 #include <iostream>
@@ -25,66 +27,11 @@ struct Probe {
     std::shared_ptr<std::atomic<int>> destroyed_;
 };
 
-class FakeChatService final : public zks::server::ChatService {
-  public:
-    [[nodiscard]] bool is_ready() const noexcept override {
-        return true;
-    }
-
-    [[nodiscard]] const std::string& model_id() const noexcept override {
-        return model_id_;
-    }
-
-    [[nodiscard]] const std::vector<zoo::tools::ToolMetadata>& tools() const noexcept override {
-        return tools_;
-    }
-
-    [[nodiscard]] zks::server::SessionHealth session_health() const noexcept override {
-        return {};
-    }
-
-    zks::server::ApiResult<zks::server::PendingChatCompletion> start_completion(
-        const zks::server::ChatCompletionRequest&,
-        std::optional<std::function<void(std::string_view)>>) override {
-        return std::unexpected(
-            zks::server::server_error("not implemented for runtime test"));
-    }
-
-    zks::server::ApiResult<zks::server::SessionSummary>
-    create_session(const zks::server::SessionCreateRequest&) override {
-        return std::unexpected(
-            zks::server::server_error("not implemented for runtime test"));
-    }
-
-    zks::server::ApiResult<zks::server::SessionSummary>
-    get_session(std::string_view) override {
-        return std::unexpected(
-            zks::server::server_error("not implemented for runtime test"));
-    }
-
-    zks::server::ApiResult<void> delete_session(std::string_view) override {
-        return std::unexpected(
-            zks::server::server_error("not implemented for runtime test"));
-    }
-
-    void stop() override {
-        stop_calls_.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    int stop_calls() const noexcept {
-        return stop_calls_.load(std::memory_order_relaxed);
-    }
-
-  private:
-    std::string model_id_ = "runtime-test-model";
-    std::vector<zoo::tools::ToolMetadata> tools_;
-    std::atomic<int> stop_calls_{0};
-};
-
 } // namespace
 
 int main() {
     auto chat_service = std::make_shared<FakeChatService>();
+    chat_service->set_model_id("runtime-test-model");
     zks::server::ServerConfig config;
     config.model_id = "runtime-test-model";
     config.zoo_config.model_path = "/tmp/runtime-test-model.gguf";
