@@ -1,0 +1,32 @@
+{
+  "bind_address": "127.0.0.1",
+  "port": 8080,
+  "model_id": "local-model",
+  "http": {
+    "client_max_body_size_bytes": 1048576,
+    "client_max_memory_body_size_bytes": 65536,
+    "idle_connection_timeout_seconds": 60
+  },
+  "sessions": {
+    "max_sessions": 0,
+    "idle_ttl_seconds": 900
+  },
+  "zoo": {
+    "model_path": "/path/to/your/model.gguf",
+    "context_size": 2048,
+    "n_gpu_layers": 0,
+    "max_tokens": -1,
+    "system_prompt": "You are a helpful assistant.",
+    "sampling": {
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "top_k": 40,
+      "repeat_penalty": 1.1,
+      "seed": -1
+    },
+    "use_mmap": true,
+    "use_mlock": false,
+    "max_history_messages": 64,
+    "request_queue_capacity": 64
+  }
+}

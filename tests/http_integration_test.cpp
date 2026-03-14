@@ -17,6 +17,7 @@
 
 #include <drogon/drogon.h>
 #include <nlohmann/json.hpp>
+#include <zoo/tools/types.hpp>
 
 namespace {
 
@@ -323,6 +324,40 @@ int main() {
                 std::cerr << "Test 8 failed: stream_disconnects_total did not increment ("
                           << *before << " -> " << *after << ")\n";
                 result = 1;
+            }
+        }
+    }
+
+    // Test 9: GET /v1/tools returns registered tool metadata
+    if (result == 0) {
+        chat_service->set_tools({zoo::tools::ToolMetadata{
+            "echo", "Echoes the input back",
+            nlohmann::json{{"type", "object"},
+                           {"properties", {{"input", {{"type", "string"}}}}},
+                           {"required", {"input"}}},
+            {zoo::tools::ToolParameter{"input", zoo::tools::ToolValueType::String, true,
+                                       "The input to echo"}}}});
+
+        auto req = drogon::HttpRequest::newHttpRequest();
+        req->setPath("/v1/tools");
+        req->setMethod(drogon::Get);
+        req->addHeader("Authorization", "Bearer test-secret");
+        auto [status, resp] = client->sendRequest(req, 5.0);
+        if (status != drogon::ReqResult::Ok || !resp ||
+            resp->getStatusCode() != drogon::k200OK) {
+            result = fail("Test 9 failed: GET /v1/tools should return 200.");
+        } else {
+            auto json = nlohmann::json::parse(std::string(resp->body()), nullptr, false);
+            if (json.is_discarded() || !json.contains("data") || !json["data"].is_array()) {
+                result = fail("Test 9 failed: /v1/tools response should have a data array.");
+            } else if (json["data"].size() != 1) {
+                std::cerr << "Test 9 failed: expected 1 tool, got " << json["data"].size() << '\n';
+                result = 1;
+            } else {
+                auto& tool = json["data"][0];
+                if (!tool.contains("function") || tool["function"]["name"] != "echo") {
+                    result = fail("Test 9 failed: tool name should be 'echo'.");
+                }
             }
         }
     }

@@ -173,6 +173,10 @@ class FakeChatService final : public zks::server::ChatService {
         mode_.store(mode, std::memory_order_release);
     }
 
+    void set_tools(std::vector<zoo::tools::ToolMetadata> tools) {
+        tools_ = std::move(tools);
+    }
+
     /// Returns the shared latch used by `StreamingSuccess` mode. Call `signal()` on
     /// the returned latch to unblock the fake completion future.
     std::shared_ptr<Latch> finish_latch() const noexcept {
