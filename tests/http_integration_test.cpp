@@ -10,6 +10,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -25,8 +26,8 @@ int fail(std::string_view message) {
 }
 
 /// Fetches /metrics and returns the value of a specific uint64 counter field.
-/// Returns -1 on transport or parse failure.
-int64_t read_metric(const drogon::HttpClientPtr& client, const char* field) {
+/// Returns std::nullopt on transport or parse failure.
+std::optional<int64_t> read_metric(const drogon::HttpClientPtr& client, const char* field) {
     auto req = drogon::HttpRequest::newHttpRequest();
     req->setPath("/metrics");
     req->setMethod(drogon::Get);
@@ -34,11 +35,11 @@ int64_t read_metric(const drogon::HttpClientPtr& client, const char* field) {
     auto [status, resp] = client->sendRequest(req, 5.0);
     if (status != drogon::ReqResult::Ok || !resp ||
         resp->getStatusCode() != drogon::k200OK) {
-        return -1;
+        return std::nullopt;
     }
     auto json = nlohmann::json::parse(std::string(resp->body()), nullptr, false);
     if (json.is_discarded() || !json.contains(field)) {
-        return -1;
+        return std::nullopt;
     }
     return json.at(field).get<int64_t>();
 }
@@ -224,62 +225,79 @@ int main() {
     // Test 6: queue_full mode increments requests_queue_rejected_total
     if (result == 0) {
         auto before = read_metric(client, "requests_queue_rejected_total");
-        chat_service->set_mode(FakeCompletionMode::QueueFull);
-
-        auto req = drogon::HttpRequest::newHttpRequest();
-        req->setPath("/v1/chat/completions");
-        req->setMethod(drogon::Post);
-        req->addHeader("Authorization", "Bearer test-secret");
-        req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-        nlohmann::json body = {
-            {"model", "integration-test-model"},
-            {"messages", {{{"role", "user"}, {"content", "hi"}}}},
-            {"stream", false}};
-        req->setBody(body.dump());
-        auto [status, resp] = client->sendRequest(req, 5.0);
-        if (status != drogon::ReqResult::Ok || !resp ||
-            resp->getStatusCode() != drogon::k503ServiceUnavailable) {
-            auto actual_code = resp ? static_cast<int>(resp->getStatusCode()) : -1;
-            std::cerr << "Test 6 failed: queue_full should return 503, got " << actual_code << '\n';
-            result = 1;
+        if (!before.has_value()) {
+            result = fail("Test 6 failed: could not read "
+                          "requests_queue_rejected_total before request.");
         } else {
-            auto after = read_metric(client, "requests_queue_rejected_total");
-            if (after <= before) {
-                std::cerr << "Test 6 failed: requests_queue_rejected_total did not increment ("
-                          << before << " -> " << after << ")\n";
+            chat_service->set_mode(FakeCompletionMode::QueueFull);
+
+            auto req = drogon::HttpRequest::newHttpRequest();
+            req->setPath("/v1/chat/completions");
+            req->setMethod(drogon::Post);
+            req->addHeader("Authorization", "Bearer test-secret");
+            req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+            nlohmann::json body = {{"model", "integration-test-model"},
+                                   {"messages", {{{"role", "user"}, {"content", "hi"}}}},
+                                   {"stream", false}};
+            req->setBody(body.dump());
+            auto [status, resp] = client->sendRequest(req, 5.0);
+            if (status != drogon::ReqResult::Ok || !resp ||
+                resp->getStatusCode() != drogon::k503ServiceUnavailable) {
+                auto actual_code = resp ? static_cast<int>(resp->getStatusCode()) : -1;
+                std::cerr << "Test 6 failed: queue_full should return 503, got " << actual_code
+                          << '\n';
                 result = 1;
+            } else {
+                auto after = read_metric(client, "requests_queue_rejected_total");
+                if (!after.has_value()) {
+                    result = fail("Test 6 failed: could not read "
+                                  "requests_queue_rejected_total after request.");
+                } else if (*after <= *before) {
+                    std::cerr << "Test 6 failed: requests_queue_rejected_total did not "
+                                 "increment ("
+                              << *before << " -> " << *after << ")\n";
+                    result = 1;
+                }
             }
+            chat_service->set_mode(FakeCompletionMode::ServerError);
         }
-        chat_service->set_mode(FakeCompletionMode::ServerError);
     }
 
     // Test 7: cancelled completion increments requests_cancelled_total
     if (result == 0) {
         auto before = read_metric(client, "requests_cancelled_total");
-        chat_service->set_mode(FakeCompletionMode::Cancelled);
-
-        auto req = drogon::HttpRequest::newHttpRequest();
-        req->setPath("/v1/chat/completions");
-        req->setMethod(drogon::Post);
-        req->addHeader("Authorization", "Bearer test-secret");
-        req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-        nlohmann::json body = {
-            {"model", "integration-test-model"},
-            {"messages", {{{"role", "user"}, {"content", "hi"}}}},
-            {"stream", false}};
-        req->setBody(body.dump());
-        auto [status, resp] = client->sendRequest(req, 5.0);
-        if (status != drogon::ReqResult::Ok || !resp) {
-            result = fail("Test 7 failed: cancelled completion request should get a response.");
+        if (!before.has_value()) {
+            result = fail("Test 7 failed: could not read requests_cancelled_total "
+                          "before request.");
         } else {
-            auto after = read_metric(client, "requests_cancelled_total");
-            if (after <= before) {
-                std::cerr << "Test 7 failed: requests_cancelled_total did not increment ("
-                          << before << " -> " << after << ")\n";
-                result = 1;
+            chat_service->set_mode(FakeCompletionMode::Cancelled);
+
+            auto req = drogon::HttpRequest::newHttpRequest();
+            req->setPath("/v1/chat/completions");
+            req->setMethod(drogon::Post);
+            req->addHeader("Authorization", "Bearer test-secret");
+            req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+            nlohmann::json body = {{"model", "integration-test-model"},
+                                   {"messages", {{{"role", "user"}, {"content", "hi"}}}},
+                                   {"stream", false}};
+            req->setBody(body.dump());
+            auto [status, resp] = client->sendRequest(req, 5.0);
+            if (status != drogon::ReqResult::Ok || !resp) {
+                result = fail("Test 7 failed: cancelled completion request should get "
+                              "a response.");
+            } else {
+                auto after = read_metric(client, "requests_cancelled_total");
+                if (!after.has_value()) {
+                    result = fail("Test 7 failed: could not read "
+                                  "requests_cancelled_total after request.");
+                } else if (*after <= *before) {
+                    std::cerr << "Test 7 failed: requests_cancelled_total did not increment ("
+                              << *before << " -> " << *after << ")\n";
+                    result = 1;
+                }
             }
+            chat_service->set_mode(FakeCompletionMode::ServerError);
         }
-        chat_service->set_mode(FakeCompletionMode::ServerError);
     }
 
     // Test 8: stream_disconnects_total increment path
@@ -292,12 +310,20 @@ int main() {
     // calling increment_stream_disconnects() and verifying /metrics reflects it.
     if (result == 0) {
         auto before = read_metric(client, "stream_disconnects_total");
-        runtime->metrics().increment_stream_disconnects();
-        auto after = read_metric(client, "stream_disconnects_total");
-        if (after != before + 1) {
-            std::cerr << "Test 8 failed: stream_disconnects_total did not increment ("
-                      << before << " -> " << after << ")\n";
-            result = 1;
+        if (!before.has_value()) {
+            result = fail("Test 8 failed: could not read stream_disconnects_total "
+                          "before increment.");
+        } else {
+            runtime->metrics().increment_stream_disconnects();
+            auto after = read_metric(client, "stream_disconnects_total");
+            if (!after.has_value()) {
+                result = fail("Test 8 failed: could not read stream_disconnects_total "
+                              "after increment.");
+            } else if (*after != *before + 1) {
+                std::cerr << "Test 8 failed: stream_disconnects_total did not increment ("
+                          << *before << " -> " << *after << ")\n";
+                result = 1;
+            }
         }
     }
 
