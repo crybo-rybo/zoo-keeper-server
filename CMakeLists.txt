@@ -191,6 +191,11 @@ if(BUILD_TESTING)
     add_test(NAME session_manager_test COMMAND zks_session_manager_test)
     add_test(NAME auth_test COMMAND zks_auth_test)
     add_test(NAME metrics_test COMMAND zks_metrics_test)
+    add_test(
+        NAME release_hygiene_test
+        COMMAND ${CMAKE_COMMAND}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/release_hygiene.cmake
+    )
     if(ZKS_ENABLE_TEST_UI)
         add_test(NAME test_ui_response_test COMMAND zks_test_ui_test)
     endif()

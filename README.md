@@ -62,6 +62,11 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
+## Release Docs
+
+- [Roadmap](docs/v0.0.1-roadmap.md)
+- [Release Notes](docs/v0.0.1-release-notes.md)
+
 ## Run
 
 ```bash
@@ -216,4 +221,4 @@ One `zoo::Agent` is loaded at startup and shared across all requests. Sessions d
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
