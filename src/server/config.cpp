@@ -52,6 +52,19 @@ Result<void> SessionConfig::validate() const {
     return {};
 }
 
+Result<void> HttpConfig::validate() const {
+    if (client_max_body_size_bytes <= 0) {
+        return std::unexpected("http.client_max_body_size_bytes must be > 0");
+    }
+    if (client_max_memory_body_size_bytes <= 0) {
+        return std::unexpected("http.client_max_memory_body_size_bytes must be > 0");
+    }
+    if (idle_connection_timeout_seconds < 0) {
+        return std::unexpected("http.idle_connection_timeout_seconds must be >= 0");
+    }
+    return {};
+}
+
 Result<void> ServerConfig::validate() const {
     if (bind_address.empty()) {
         return std::unexpected("bind_address cannot be empty");
@@ -64,6 +77,9 @@ Result<void> ServerConfig::validate() const {
     }
     if (api_key.has_value() && api_key->empty()) {
         return std::unexpected("api_key must not be empty");
+    }
+    if (auto validation = http.validate(); !validation) {
+        return std::unexpected(validation.error());
     }
     if (auto validation = sessions.validate(); !validation) {
         return std::unexpected(validation.error());
@@ -87,8 +103,8 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
         return std::unexpected(with_path_context(path, error.what()));
     }
 
-    static constexpr std::array<const char*, 6> kAllowedKeys = {
-        "bind_address", "port", "model_id", "api_key", "sessions", "zoo"};
+    static constexpr std::array<const char*, 7> kAllowedKeys = {
+        "bind_address", "port", "model_id", "api_key", "http", "sessions", "zoo"};
 
     if (auto unknown_key_check = reject_unknown_keys(json, "server config", kAllowedKeys);
         !unknown_key_check) {
@@ -120,6 +136,28 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
                     return std::unexpected(with_path_context(path, "api_key must be a string"));
                 }
                 config.api_key = it->get<std::string>();
+            }
+        }
+        if (auto it = json.find("http"); it != json.end()) {
+            static constexpr std::array<const char*, 3> kAllowedHttpKeys = {
+                "client_max_body_size_bytes", "client_max_memory_body_size_bytes",
+                "idle_connection_timeout_seconds"};
+            if (auto unknown_keys =
+                    reject_unknown_keys(*it, "http config", kAllowedHttpKeys);
+                !unknown_keys) {
+                return std::unexpected(with_path_context(path, unknown_keys.error()));
+            }
+
+            if (auto http_it = it->find("client_max_body_size_bytes"); http_it != it->end()) {
+                http_it->get_to(config.http.client_max_body_size_bytes);
+            }
+            if (auto http_it = it->find("client_max_memory_body_size_bytes");
+                http_it != it->end()) {
+                http_it->get_to(config.http.client_max_memory_body_size_bytes);
+            }
+            if (auto http_it = it->find("idle_connection_timeout_seconds");
+                http_it != it->end()) {
+                http_it->get_to(config.http.idle_connection_timeout_seconds);
             }
         }
         if (auto it = json.find("sessions"); it != json.end()) {

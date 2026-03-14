@@ -125,6 +125,163 @@ int main() {
         return 1;
     }
 
+    // http defaults when omitted
+    if (valid_config->http.client_max_body_size_bytes != 1048576 ||
+        valid_config->http.client_max_memory_body_size_bytes != 65536 ||
+        valid_config->http.idle_connection_timeout_seconds != 60) {
+        std::cerr << "http defaults not applied when section omitted." << '\n';
+        cleanup();
+        return 1;
+    }
+
+    // explicit http overrides
+    {
+        const auto http_override_path = temp_dir / "http_override.json";
+        if (!write_text_file(http_override_path,
+                             R"json({
+  "model_id": "demo-model",
+  "http": {
+    "client_max_body_size_bytes": 2097152,
+    "client_max_memory_body_size_bytes": 131072,
+    "idle_connection_timeout_seconds": 120
+  },
+  "zoo": {
+    "model_path": "/tmp/demo.gguf"
+  }
+})json")) {
+            std::cerr << "Failed to write http override config fixture." << '\n';
+            cleanup();
+            return 1;
+        }
+
+        auto cfg = zks::server::load_config(http_override_path);
+        if (!cfg) {
+            std::cerr << "http override config unexpectedly failed: " << cfg.error() << '\n';
+            cleanup();
+            return 1;
+        }
+        if (cfg->http.client_max_body_size_bytes != 2097152 ||
+            cfg->http.client_max_memory_body_size_bytes != 131072 ||
+            cfg->http.idle_connection_timeout_seconds != 120) {
+            std::cerr << "http overrides not parsed correctly." << '\n';
+            cleanup();
+            return 1;
+        }
+    }
+
+    // unknown http key rejected
+    {
+        const auto unknown_http_path = temp_dir / "unknown_http.json";
+        if (!write_text_file(unknown_http_path,
+                             R"json({
+  "model_id": "demo-model",
+  "http": { "bad_key": 42 },
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json")) {
+            std::cerr << "Failed to write unknown http key config fixture." << '\n';
+            cleanup();
+            return 1;
+        }
+
+        auto cfg = zks::server::load_config(unknown_http_path);
+        if (cfg) {
+            std::cerr << "Unknown http key config unexpectedly parsed successfully." << '\n';
+            cleanup();
+            return 1;
+        }
+        if (cfg.error().find("Unknown http config key: bad_key") == std::string::npos) {
+            std::cerr << "Unknown http key config failed for wrong reason: " << cfg.error()
+                      << '\n';
+            cleanup();
+            return 1;
+        }
+    }
+
+    // non-positive client_max_body_size_bytes rejected
+    {
+        const auto bad_body_path = temp_dir / "bad_body.json";
+        if (!write_text_file(bad_body_path,
+                             R"json({
+  "model_id": "demo-model",
+  "http": { "client_max_body_size_bytes": 0 },
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json")) {
+            std::cerr << "Failed to write bad body size config fixture." << '\n';
+            cleanup();
+            return 1;
+        }
+
+        auto cfg = zks::server::load_config(bad_body_path);
+        if (cfg) {
+            std::cerr << "Non-positive body size config unexpectedly parsed successfully." << '\n';
+            cleanup();
+            return 1;
+        }
+        if (cfg.error().find("client_max_body_size_bytes must be > 0") == std::string::npos) {
+            std::cerr << "Bad body size config failed for wrong reason: " << cfg.error() << '\n';
+            cleanup();
+            return 1;
+        }
+    }
+
+    // non-positive client_max_memory_body_size_bytes rejected
+    {
+        const auto bad_mem_path = temp_dir / "bad_mem.json";
+        if (!write_text_file(bad_mem_path,
+                             R"json({
+  "model_id": "demo-model",
+  "http": { "client_max_memory_body_size_bytes": -1 },
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json")) {
+            std::cerr << "Failed to write bad memory body size config fixture." << '\n';
+            cleanup();
+            return 1;
+        }
+
+        auto cfg = zks::server::load_config(bad_mem_path);
+        if (cfg) {
+            std::cerr
+                << "Non-positive memory body size config unexpectedly parsed successfully." << '\n';
+            cleanup();
+            return 1;
+        }
+        if (cfg.error().find("client_max_memory_body_size_bytes must be > 0") ==
+            std::string::npos) {
+            std::cerr << "Bad memory body size config failed for wrong reason: " << cfg.error()
+                      << '\n';
+            cleanup();
+            return 1;
+        }
+    }
+
+    // idle_connection_timeout_seconds = 0 accepted (explicit opt-out)
+    {
+        const auto timeout_zero_path = temp_dir / "timeout_zero.json";
+        if (!write_text_file(timeout_zero_path,
+                             R"json({
+  "model_id": "demo-model",
+  "http": { "idle_connection_timeout_seconds": 0 },
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json")) {
+            std::cerr << "Failed to write timeout zero config fixture." << '\n';
+            cleanup();
+            return 1;
+        }
+
+        auto cfg = zks::server::load_config(timeout_zero_path);
+        if (!cfg) {
+            std::cerr << "idle_connection_timeout_seconds=0 should be accepted but failed: "
+                      << cfg.error() << '\n';
+            cleanup();
+            return 1;
+        }
+        if (cfg->http.idle_connection_timeout_seconds != 0) {
+            std::cerr << "idle_connection_timeout_seconds=0 not parsed correctly." << '\n';
+            cleanup();
+            return 1;
+        }
+    }
+
     {
         zks::server::ServerConfig config;
         config.bind_address = "0.0.0.0";

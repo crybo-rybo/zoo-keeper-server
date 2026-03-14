@@ -45,8 +45,20 @@ int main(int argc, char** argv) {
 
     drogon::app()
         .addListener(config.bind_address, config.port)
+        .setClientMaxBodySize(static_cast<size_t>(config.http.client_max_body_size_bytes))
+        .setClientMaxMemoryBodySize(
+            static_cast<size_t>(config.http.client_max_memory_body_size_bytes))
+        .setIdleConnectionTimeout(config.http.idle_connection_timeout_seconds)
         .setConnectionCallback([disconnect_registry](const trantor::TcpConnectionPtr& connection) {
             disconnect_registry->handle_connection_event(connection);
+        })
+        .setTermSignalHandler([] {
+            std::clog << "[shutdown] Signal received, stopping server..." << '\n';
+            drogon::app().quit();
+        })
+        .setIntSignalHandler([] {
+            std::clog << "[shutdown] Signal received, stopping server..." << '\n';
+            drogon::app().quit();
         })
         .setLogLevel(trantor::Logger::kWarn)
         .disableSession()
@@ -54,6 +66,8 @@ int main(int argc, char** argv) {
 
     runtime_result->reset();
     disconnect_registry.reset();
+
+    std::clog << "[shutdown] Server stopped." << '\n';
 
     return 0;
 }

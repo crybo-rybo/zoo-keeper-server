@@ -171,6 +171,12 @@ if(BUILD_TESTING)
     target_compile_features(zks_metrics_test PRIVATE cxx_std_23)
     target_link_libraries(zks_metrics_test PRIVATE zks_server_core)
 
+    add_executable(zks_http_integration_test
+        tests/http_integration_test.cpp
+    )
+    target_compile_features(zks_http_integration_test PRIVATE cxx_std_23)
+    target_link_libraries(zks_http_integration_test PRIVATE zks_server_core)
+
     if(ZKS_ENABLE_TEST_UI)
         add_executable(zks_test_ui_test
             tests/test_ui_test.cpp
@@ -191,6 +197,8 @@ if(BUILD_TESTING)
     add_test(NAME session_manager_test COMMAND zks_session_manager_test)
     add_test(NAME auth_test COMMAND zks_auth_test)
     add_test(NAME metrics_test COMMAND zks_metrics_test)
+    add_test(NAME http_integration_test COMMAND zks_http_integration_test)
+    set_tests_properties(http_integration_test PROPERTIES TIMEOUT 30)
     add_test(
         NAME release_hygiene_test
         COMMAND ${CMAKE_COMMAND}

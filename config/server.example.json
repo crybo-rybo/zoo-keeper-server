@@ -3,6 +3,11 @@
   "port": 8080,
   "model_id": "local-model",
   "api_key": null,
+  "http": {
+    "client_max_body_size_bytes": 1048576,
+    "client_max_memory_body_size_bytes": 65536,
+    "idle_connection_timeout_seconds": 60
+  },
   "sessions": {
     "max_sessions": 1,
     "idle_ttl_seconds": 900
