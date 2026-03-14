@@ -12,6 +12,8 @@ Usage:
 Requires Python 3.9+ and only stdlib modules.
 """
 
+from __future__ import annotations
+
 import argparse
 import http.client
 import json
@@ -153,9 +155,9 @@ def run_benchmark(
 
     for r in results:
         bench.latencies_ms.append(r.latency_ms)
-        if r.error:
+        if r.status == 0 or r.status >= 400:
             bench.errors += 1
-            if bench.first_error is None:
+            if bench.first_error is None and r.error:
                 bench.first_error = r.error[:200]
 
     bench.latencies_ms.sort()
