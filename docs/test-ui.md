@@ -50,10 +50,16 @@ Relevant optional settings:
 - `sessions.max_sessions`: set greater than `0` to enable session creation from
   the UI
 - `sessions.idle_ttl_seconds`: session idle timeout in seconds
+- `api_key`: when set, the browser requests must include
+  `Authorization: Bearer <key>`
 - `zoo.system_prompt`: base prompt used by the shared runtime
 
 If `sessions.max_sessions` is `0`, the page still works, but only in stateless
 mode.
+
+If `bind_address` is non-loopback and `api_key` is unset, the server emits a
+startup warning because that configuration should only be used on a trusted
+network.
 
 ## Run
 
@@ -127,6 +133,8 @@ The page is same-origin with the API and uses the existing server endpoints
 directly.
 
 - Refresh server data loads `/healthz`, `/v1/models`, and `/v1/tools`
+- `/v1/tools` currently loads the server-owned tool catalog, which is empty in
+  the default build
 - Stateless chat sends the full local transcript to
   `/v1/chat/completions`
 - Session chat first creates a session with `POST /v1/sessions`, then sends one

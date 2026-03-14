@@ -5,8 +5,8 @@
 <h1 align="center">Zoo Keeper Server</h1>
 
 <p align="center">
-  <b>A local LLM inference server with an OpenAI-compatible REST API.</b><br/>
-  <sub>llama.cpp-backed &bull; SSE streaming &bull; Sessions &bull; Tool invocations &bull; API key auth</sub>
+  <b>A local LLM inference server with an OpenAI-compatible subset REST API.</b><br/>
+  <sub>llama.cpp-backed &bull; SSE streaming &bull; Sessions &bull; Metrics &bull; API key auth</sub>
 </p>
 
 <p align="center">
@@ -17,7 +17,11 @@
 
 ## About
 
-`zoo-keeper-server` wraps the [zoo-keeper](https://github.com/crybo-rybo/zoo-keeper) agent library in a clean HTTP server. Drop in a GGUF model, point the config at it, and get an OpenAI-compatible `/v1/chat/completions` endpoint — with streaming, optional sessions, tool invocation tracking, and an observability metrics endpoint. Built with C++23 and [Drogon](https://github.com/drogonframework/drogon).
+`zoo-keeper-server` wraps the [zoo-keeper](https://github.com/crybo-rybo/zoo-keeper)
+agent library in a clean HTTP server. Drop in a GGUF model, point the config at
+it, and get an OpenAI-compatible subset of `/v1/chat/completions` with
+streaming, optional sessions, and an observability metrics endpoint. Built with
+C++23 and [Drogon](https://github.com/drogonframework/drogon).
 
 ## Build
 
@@ -88,9 +92,14 @@ Update `config/server.example.json` with a real GGUF `model_path` before startup
 }
 ```
 
-Set `api_key` to a non-null string to require `Authorization: Bearer <key>` on all non-`/healthz` endpoints. Omit or set to `null` for trusted localhost mode.
+Set `api_key` to a non-empty string to require `Authorization: Bearer <key>` on
+all non-`/healthz` endpoints. Omit or set to `null` for trusted localhost mode.
 
 Set `sessions.max_sessions` to `0` (the default) to disable sessions entirely.
+
+When `bind_address` is non-loopback and `api_key` is unset, the server emits a
+startup warning because that configuration should only be used on a trusted
+network.
 
 The `zoo` object is passed directly to `zoo::Config`. See [zoo-keeper](https://github.com/crybo-rybo/zoo-keeper) for the full set of options including sampling parameters.
 
@@ -100,24 +109,31 @@ The `zoo` object is passed directly to `zoo::Config`. See [zoo-keeper](https://g
 |----------|--------|-------|
 | `/healthz` | GET | `200` when ready, `503` otherwise |
 | `/v1/models` | GET | Returns the configured `model_id` |
-| `/v1/tools` | GET | Server-owned tool catalog |
+| `/v1/tools` | GET | Server-owned tool catalog; empty by default |
 | `/v1/sessions` | POST | Create a session |
 | `/v1/sessions/{id}` | GET / DELETE | Session metadata / teardown |
-| `/v1/chat/completions` | POST | OpenAI-compatible; supports `stream: true` |
+| `/v1/chat/completions` | POST | OpenAI-compatible subset; supports `stream: true` |
 | `/metrics` | GET | Request counters and uptime |
 
 ### Chat completions
 
-`POST /v1/chat/completions` accepts:
+`POST /v1/chat/completions` accepts only these top-level fields:
 
 - `model` — string
-- `messages` — array of `{role, content}` objects; roles: `system`, `user`, `assistant`, `tool`
+- `messages` — array of message objects; accepted fields are `role`, `content`,
+  and `tool_call_id` for `tool` messages
 - `stream` — optional boolean for SSE
 - `session_id` — optional; associates the request with a server-owned session
 
 When `session_id` is omitted the request is stateless and `messages` should contain the full transcript. When present, `messages` must contain exactly one new `user` message — prior context comes from the session.
 
-Responses include a `tool_invocations` array (empty or populated) and a `zoo_metrics` object with latency and throughput data.
+Unsupported top-level request fields currently return `400` with
+`error.code = "unknown_field"`.
+
+Responses include a `tool_invocations` array and a `zoo_metrics` object with
+latency and throughput data. By default the server does not register any
+server-owned tools, so `/v1/tools` returns an empty list and
+`tool_invocations` will usually be empty as well.
 
 ### Metrics
 
@@ -132,6 +148,10 @@ Responses include a `tool_invocations` array (empty or populated) and a `zoo_met
   "uptime_seconds": 3600
 }
 ```
+
+The current counters are HTTP-response based. Streaming failures that happen
+after the initial `200 OK` response are not surfaced as structured metric
+errors yet.
 
 ## Examples
 
