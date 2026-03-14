@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A local LLM inference server with an OpenAI-compatible subset REST API.</b><br/>
-  <sub>llama.cpp-backed &bull; SSE streaming &bull; Sessions &bull; Metrics &bull; API key auth</sub>
+  <sub>llama.cpp-backed &bull; SSE streaming &bull; Sessions &bull; Command tools &bull; Metrics &bull; API key auth</sub>
 </p>
 
 <p align="center">
@@ -20,8 +20,9 @@
 `zoo-keeper-server` wraps the [zoo-keeper](https://github.com/crybo-rybo/zoo-keeper)
 agent library in a clean HTTP server. Drop in a GGUF model, point the config at
 it, and get an OpenAI-compatible subset of `/v1/chat/completions` with
-streaming, optional sessions, and an observability metrics endpoint. Built with
-C++23 and [Drogon](https://github.com/drogonframework/drogon).
+streaming, optional sessions, server-owned command tools, and an observability
+metrics endpoint. Built with C++23 and
+[Drogon](https://github.com/drogonframework/drogon).
 
 ## Build
 
@@ -87,6 +88,7 @@ Update `config/server.example.json` with a real GGUF `model_path` before startup
     "max_sessions": 0,
     "idle_ttl_seconds": 900
   },
+  "tools": [],
   "zoo": {
     "model_path": "/path/to/model.gguf",
     "context_size": 2048,
@@ -102,6 +104,12 @@ all non-`/healthz` endpoints. Omit or set to `null` for trusted localhost mode.
 
 Set `sessions.max_sessions` to `0` (the default) to disable sessions entirely.
 
+Set `tools` to an array of server-owned command tools to let the shared
+`zoo::Agent` call local executables during completion. Each tool declares a
+name, description, manual-schema `parameters` object, and a `command` argv
+array. The server sends tool arguments as JSON on stdin and expects one JSON
+object on stdout.
+
 When `bind_address` is non-loopback and `api_key` is unset, the server emits a
 startup warning because that configuration should only be used on a trusted
 network.
@@ -114,7 +122,7 @@ The `zoo` object is passed directly to `zoo::Config`. See [zoo-keeper](https://g
 |----------|--------|-------|
 | `/healthz` | GET | `200` when ready, `503` otherwise |
 | `/v1/models` | GET | Returns the configured `model_id` |
-| `/v1/tools` | GET | Server-owned tool catalog; empty by default |
+| `/v1/tools` | GET | Server-owned tool catalog from `tools` config |
 | `/v1/sessions` | POST | Create a session |
 | `/v1/sessions/{id}` | GET / DELETE | Session metadata / teardown |
 | `/v1/chat/completions` | POST | OpenAI-compatible subset; supports `stream: true` |
@@ -136,9 +144,9 @@ Unsupported top-level request fields currently return `400` with
 `error.code = "unknown_field"`.
 
 Responses include a `tool_invocations` array and a `zoo_metrics` object with
-latency and throughput data. By default the server does not register any
-server-owned tools, so `/v1/tools` returns an empty list and
-`tool_invocations` will usually be empty as well.
+latency and throughput data. When `tools` are configured, the shared agent
+registers them at startup, `/v1/tools` returns their schemas, and each
+completion reports per-invocation outcomes in `tool_invocations`.
 
 ### Metrics
 
@@ -148,6 +156,12 @@ server-owned tools, so `/v1/tools` returns an empty list and
 {
   "requests_total": 142,
   "requests_errors": 3,
+  "requests_cancelled_total": 2,
+  "requests_queue_rejected_total": 1,
+  "stream_disconnects_total": 4,
+  "tool_invocations_total": 18,
+  "tool_failures_total": 2,
+  "tool_timeouts_total": 1,
   "active_sessions": 2,
   "model_id": "local-model",
   "uptime_seconds": 3600
@@ -157,6 +171,39 @@ server-owned tools, so `/v1/tools` returns an empty list and
 The current counters are HTTP-response based. Streaming failures that happen
 after the initial `200 OK` response are not surfaced as structured metric
 errors yet.
+
+### Command tools
+
+Example tool declaration:
+
+```json
+{
+  "tools": [
+    {
+      "name": "echo_input",
+      "description": "Echo a string back to the model.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "value": { "type": "string", "description": "Value to echo" }
+        },
+        "required": ["value"],
+        "additionalProperties": false
+      },
+      "command": ["/absolute/path/to/tool-binary", "echo"],
+      "timeout_ms": 5000
+    }
+  ]
+}
+```
+
+Tool rules:
+
+- `command` is executed as argv, not through a shell
+- tool arguments arrive as JSON on stdin
+- stdout must be a single JSON object
+- non-zero exit, invalid stdout, or timeout are reported as `tool_execution_failed`
+- the current implementation supports the upstream flat-object manual schema subset only
 
 ## Examples
 

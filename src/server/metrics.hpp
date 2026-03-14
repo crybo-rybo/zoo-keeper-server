@@ -13,6 +13,9 @@ struct MetricsSnapshot {
     uint64_t requests_cancelled_total = 0;
     uint64_t requests_queue_rejected_total = 0;
     uint64_t stream_disconnects_total = 0;
+    uint64_t tool_invocations_total = 0;
+    uint64_t tool_failures_total = 0;
+    uint64_t tool_timeouts_total = 0;
     size_t active_sessions = 0;
     std::string model_id;
     int64_t uptime_seconds = 0;
@@ -42,6 +45,18 @@ class ServerMetrics {
         stream_disconnects_total_.fetch_add(1, std::memory_order_relaxed);
     }
 
+    void increment_tool_invocations() noexcept {
+        tool_invocations_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void increment_tool_failures() noexcept {
+        tool_failures_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void increment_tool_timeouts() noexcept {
+        tool_timeouts_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+
     [[nodiscard]] uint64_t requests_total() const noexcept {
         return requests_total_.load(std::memory_order_relaxed);
     }
@@ -62,6 +77,18 @@ class ServerMetrics {
         return stream_disconnects_total_.load(std::memory_order_relaxed);
     }
 
+    [[nodiscard]] uint64_t tool_invocations_total() const noexcept {
+        return tool_invocations_total_.load(std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] uint64_t tool_failures_total() const noexcept {
+        return tool_failures_total_.load(std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] uint64_t tool_timeouts_total() const noexcept {
+        return tool_timeouts_total_.load(std::memory_order_relaxed);
+    }
+
     [[nodiscard]] int64_t uptime_seconds() const noexcept {
         return std::chrono::duration_cast<std::chrono::seconds>(
                    std::chrono::steady_clock::now() - start_time_)
@@ -74,6 +101,9 @@ class ServerMetrics {
     std::atomic<uint64_t> requests_cancelled_total_{0};
     std::atomic<uint64_t> requests_queue_rejected_total_{0};
     std::atomic<uint64_t> stream_disconnects_total_{0};
+    std::atomic<uint64_t> tool_invocations_total_{0};
+    std::atomic<uint64_t> tool_failures_total_{0};
+    std::atomic<uint64_t> tool_timeouts_total_{0};
     std::chrono::steady_clock::time_point start_time_;
 };
 

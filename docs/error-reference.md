@@ -94,7 +94,7 @@ Returned when the server encounters an internal failure during inference.
 | `tokenization_failed` | The prompt could not be tokenized. |
 | `template_render_failed` | The chat template could not be rendered. |
 | `request_timeout` | The request exceeded the configured timeout. |
-| `tool_execution_failed` | A registered tool handler returned an error. |
+| `tool_execution_failed` | A registered tool handler returned an error, including command-tool exit failures, invalid stdout, or timeouts. |
 | `tool_retries_exhausted` | Tool-call validation retries were exhausted. |
 | `runtime_error` | Catch-all for unmapped internal errors. |
 

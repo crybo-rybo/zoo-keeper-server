@@ -19,6 +19,8 @@
 
 /// Configurable behavior modes for `FakeChatService::start_completion()`.
 enum class FakeCompletionMode {
+    /// Returns a successful response immediately from `start_completion()`.
+    Success,
     /// Returns `server_error("not implemented in fake")` from `start_completion()` itself.
     ServerError,
     /// Returns `service_unavailable_error("queue full", "queue_full")` from `start_completion()`.
@@ -74,6 +76,23 @@ class FakeChatService final : public zks::server::ChatService {
         std::optional<std::function<void(std::string_view)>> callback = std::nullopt) override {
 
         auto mode = mode_.load(std::memory_order_acquire);
+
+        if (mode == FakeCompletionMode::Success) {
+            std::promise<zoo::Expected<zoo::Response>> promise;
+            auto future = promise.get_future();
+            {
+                std::lock_guard<std::mutex> lock(response_mutex_);
+                promise.set_value(response_);
+            }
+
+            zks::server::PendingChatCompletion pending;
+            pending.id = "fake-success-1";
+            pending.created = 0;
+            pending.model = model_id_;
+            pending.handle = zoo::RequestHandle(0, std::move(future));
+            pending.cancel = [] {};
+            return pending;
+        }
 
         if (mode == FakeCompletionMode::ServerError) {
             return std::unexpected(zks::server::server_error("not implemented in fake"));
@@ -177,6 +196,11 @@ class FakeChatService final : public zks::server::ChatService {
         tools_ = std::move(tools);
     }
 
+    void set_response(zoo::Response response) {
+        std::lock_guard<std::mutex> lock(response_mutex_);
+        response_ = std::move(response);
+    }
+
     /// Returns the shared latch used by `StreamingSuccess` mode. Call `signal()` on
     /// the returned latch to unblock the fake completion future.
     std::shared_ptr<Latch> finish_latch() const noexcept {
@@ -186,6 +210,8 @@ class FakeChatService final : public zks::server::ChatService {
   private:
     std::string model_id_ = "fake-model";
     std::vector<zoo::tools::ToolMetadata> tools_;
+    zoo::Response response_;
+    mutable std::mutex response_mutex_;
     std::atomic<int> stop_calls_{0};
     std::atomic<bool> ready_{true};
     std::atomic<FakeCompletionMode> mode_{FakeCompletionMode::ServerError};

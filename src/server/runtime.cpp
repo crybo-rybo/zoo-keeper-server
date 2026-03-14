@@ -1,5 +1,7 @@
 #include "server/runtime.hpp"
 
+#include "server/command_tools.hpp"
+
 #include <chrono>
 #include <future>
 #include <utility>
@@ -11,7 +13,12 @@ constexpr std::chrono::seconds kReaperInterval{60};
 } // namespace
 
 Result<std::shared_ptr<ServerRuntime>> ServerRuntime::create(ServerConfig config) {
-    auto chat_service_result = ZooChatService::create(config);
+    auto tool_provider_result = make_command_tool_provider(config.tools);
+    if (!tool_provider_result) {
+        return std::unexpected(tool_provider_result.error());
+    }
+
+    auto chat_service_result = ZooChatService::create(config, std::move(*tool_provider_result));
     if (!chat_service_result) {
         return std::unexpected(chat_service_result.error());
     }
@@ -75,6 +82,9 @@ MetricsSnapshot ServerRuntime::metrics_snapshot() const {
         .requests_cancelled_total = metrics_.requests_cancelled_total(),
         .requests_queue_rejected_total = metrics_.requests_queue_rejected_total(),
         .stream_disconnects_total = metrics_.stream_disconnects_total(),
+        .tool_invocations_total = metrics_.tool_invocations_total(),
+        .tool_failures_total = metrics_.tool_failures_total(),
+        .tool_timeouts_total = metrics_.tool_timeouts_total(),
         .active_sessions = chat_service_->session_health().active,
         .model_id = config_.model_id,
         .uptime_seconds = metrics_.uptime_seconds(),

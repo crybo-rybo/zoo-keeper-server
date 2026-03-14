@@ -209,6 +209,9 @@ int main() {
                                                  "requests_cancelled_total",
                                                  "requests_queue_rejected_total",
                                                  "stream_disconnects_total",
+                                                 "tool_invocations_total",
+                                                 "tool_failures_total",
+                                                 "tool_timeouts_total",
                                                  "active_sessions",
                                                  "model_id",
                                                  "uptime_seconds"};
@@ -359,6 +362,74 @@ int main() {
                     result = fail("Test 9 failed: tool name should be 'echo'.");
                 }
             }
+        }
+    }
+
+    // Test 10: successful completion with tool invocations increments tool metrics
+    if (result == 0) {
+        auto before_invocations = read_metric(client, "tool_invocations_total");
+        auto before_failures = read_metric(client, "tool_failures_total");
+        auto before_timeouts = read_metric(client, "tool_timeouts_total");
+        if (!before_invocations.has_value() || !before_failures.has_value() ||
+            !before_timeouts.has_value()) {
+            result = fail("Test 10 failed: could not read tool metrics before request.");
+        } else {
+            zoo::Response response;
+            response.text = "tool result";
+
+            zoo::ToolInvocation succeeded;
+            succeeded.id = "call-1";
+            succeeded.name = "echo";
+            succeeded.arguments_json = R"({"input":"hi"})";
+            succeeded.status = zoo::ToolInvocationStatus::Succeeded;
+            succeeded.result_json = R"({"output":"hi"})";
+            response.tool_invocations.push_back(std::move(succeeded));
+
+            zoo::ToolInvocation timed_out;
+            timed_out.id = "call-2";
+            timed_out.name = "echo";
+            timed_out.arguments_json = R"({"input":"slow"})";
+            timed_out.status = zoo::ToolInvocationStatus::ExecutionFailed;
+            timed_out.error =
+                zoo::Error{zoo::ErrorCode::ToolExecutionFailed,
+                           "Tool command timed out after 10 ms"};
+            response.tool_invocations.push_back(std::move(timed_out));
+
+            chat_service->set_response(std::move(response));
+            chat_service->set_mode(FakeCompletionMode::Success);
+
+            auto req = drogon::HttpRequest::newHttpRequest();
+            req->setPath("/v1/chat/completions");
+            req->setMethod(drogon::Post);
+            req->addHeader("Authorization", "Bearer test-secret");
+            req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+            nlohmann::json body = {{"model", "integration-test-model"},
+                                   {"messages", {{{"role", "user"}, {"content", "hi"}}}},
+                                   {"stream", false}};
+            req->setBody(body.dump());
+            auto [status, resp] = client->sendRequest(req, 5.0);
+            if (status != drogon::ReqResult::Ok || !resp ||
+                resp->getStatusCode() != drogon::k200OK) {
+                result = fail("Test 10 failed: successful completion request should return 200.");
+            } else {
+                auto after_invocations = read_metric(client, "tool_invocations_total");
+                auto after_failures = read_metric(client, "tool_failures_total");
+                auto after_timeouts = read_metric(client, "tool_timeouts_total");
+                if (!after_invocations.has_value() || !after_failures.has_value() ||
+                    !after_timeouts.has_value()) {
+                    result = fail("Test 10 failed: could not read tool metrics after request.");
+                } else if (*after_invocations != *before_invocations + 2 ||
+                           *after_failures != *before_failures + 1 ||
+                           *after_timeouts != *before_timeouts + 1) {
+                    std::cerr << "Test 10 failed: unexpected tool metric deltas ("
+                              << *before_invocations << "->" << *after_invocations << ", "
+                              << *before_failures << "->" << *after_failures << ", "
+                              << *before_timeouts << "->" << *after_timeouts << ")\n";
+                    result = 1;
+                }
+            }
+
+            chat_service->set_mode(FakeCompletionMode::ServerError);
         }
     }
 

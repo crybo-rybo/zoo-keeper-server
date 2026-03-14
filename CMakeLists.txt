@@ -88,6 +88,7 @@ add_library(zks_server_core
     src/server/api_json.cpp
     src/server/api_routes.cpp
     src/server/chat_service.cpp
+    src/server/command_tools.cpp
     src/server/config.cpp
     src/server/runtime.cpp
     src/server/session_manager.cpp
@@ -177,6 +178,18 @@ if(BUILD_TESTING)
     target_compile_features(zks_http_integration_test PRIVATE cxx_std_23)
     target_link_libraries(zks_http_integration_test PRIVATE zks_server_core)
 
+    add_executable(zks_tool_test_helper
+        tests/tool_test_helper.cpp
+    )
+    target_compile_features(zks_tool_test_helper PRIVATE cxx_std_23)
+    target_link_libraries(zks_tool_test_helper PRIVATE zks_server_core)
+
+    add_executable(zks_command_tools_test
+        tests/command_tools_test.cpp
+    )
+    target_compile_features(zks_command_tools_test PRIVATE cxx_std_23)
+    target_link_libraries(zks_command_tools_test PRIVATE zks_server_core)
+
     if(ZKS_ENABLE_TEST_UI)
         add_executable(zks_test_ui_test
             tests/test_ui_test.cpp
@@ -198,6 +211,10 @@ if(BUILD_TESTING)
     add_test(NAME auth_test COMMAND zks_auth_test)
     add_test(NAME metrics_test COMMAND zks_metrics_test)
     add_test(NAME http_integration_test COMMAND zks_http_integration_test)
+    add_test(
+        NAME command_tools_test
+        COMMAND zks_command_tools_test $<TARGET_FILE:zks_tool_test_helper>
+    )
     set_tests_properties(http_integration_test PROPERTIES TIMEOUT 30)
     if(ZKS_ENABLE_TEST_UI)
         add_test(NAME test_ui_response_test COMMAND zks_test_ui_test)

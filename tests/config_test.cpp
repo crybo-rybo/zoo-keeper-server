@@ -34,6 +34,9 @@ int main() {
     const auto valid_path = temp_dir / "valid.json";
     const auto invalid_path = temp_dir / "invalid.json";
     const auto empty_api_key_path = temp_dir / "empty_api_key.json";
+    const auto tools_path = temp_dir / "tools.json";
+    const auto missing_tool_path = temp_dir / "missing_tool.json";
+    const auto bad_tool_schema_path = temp_dir / "bad_tool_schema.json";
 
     if (!write_text_file(valid_path,
                          R"json({
@@ -76,6 +79,82 @@ int main() {
   }
 })json")) {
         std::cerr << "Failed to write empty api_key config fixture." << '\n';
+        cleanup();
+        return 1;
+    }
+
+    if (!write_text_file(tools_path,
+                         R"json({
+  "model_id": "demo-model",
+  "tools": [{
+    "name": "env",
+    "description": "Print environment",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "string" }
+      },
+      "required": ["value"],
+      "additionalProperties": false
+    },
+    "command": ["/usr/bin/env"],
+    "timeout_ms": 1500,
+    "env": {
+      "ZKS_TEST_FLAG": "1"
+    }
+  }],
+  "zoo": {
+    "model_path": "/tmp/demo.gguf"
+  }
+})json")) {
+        std::cerr << "Failed to write tools config fixture." << '\n';
+        cleanup();
+        return 1;
+    }
+
+    if (!write_text_file(missing_tool_path,
+                         R"json({
+  "model_id": "demo-model",
+  "tools": [{
+    "name": "missing",
+    "description": "Missing executable",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "command": ["/definitely/missing/tool"]
+  }],
+  "zoo": {
+    "model_path": "/tmp/demo.gguf"
+  }
+})json")) {
+        std::cerr << "Failed to write missing tool config fixture." << '\n';
+        cleanup();
+        return 1;
+    }
+
+    if (!write_text_file(bad_tool_schema_path,
+                         R"json({
+  "model_id": "demo-model",
+  "tools": [{
+    "name": "bad-schema",
+    "description": "Unsupported schema",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "nested": {
+          "type": "object"
+        }
+      }
+    },
+    "command": ["/usr/bin/env"]
+  }],
+  "zoo": {
+    "model_path": "/tmp/demo.gguf"
+  }
+})json")) {
+        std::cerr << "Failed to write bad tool schema config fixture." << '\n';
         cleanup();
         return 1;
     }
@@ -132,6 +211,53 @@ int main() {
         std::cerr << "http defaults not applied when section omitted." << '\n';
         cleanup();
         return 1;
+    }
+
+    {
+        auto cfg = zks::server::load_config(tools_path);
+        if (!cfg) {
+            std::cerr << "tools config unexpectedly failed: " << cfg.error() << '\n';
+            cleanup();
+            return 1;
+        }
+        if (cfg->tools.size() != 1 || cfg->tools[0].name != "env" ||
+            cfg->tools[0].command.size() != 1 ||
+            cfg->tools[0].command[0] != "/usr/bin/env" ||
+            cfg->tools[0].timeout_ms != 1500 ||
+            cfg->tools[0].env.at("ZKS_TEST_FLAG") != "1") {
+            std::cerr << "tools config parsed with unexpected values." << '\n';
+            cleanup();
+            return 1;
+        }
+    }
+
+    {
+        auto cfg = zks::server::load_config(missing_tool_path);
+        if (cfg) {
+            std::cerr << "Missing tool config unexpectedly parsed successfully." << '\n';
+            cleanup();
+            return 1;
+        }
+        if (cfg.error().find("tools.command executable not found") == std::string::npos) {
+            std::cerr << "Missing tool config failed for wrong reason: " << cfg.error() << '\n';
+            cleanup();
+            return 1;
+        }
+    }
+
+    {
+        auto cfg = zks::server::load_config(bad_tool_schema_path);
+        if (cfg) {
+            std::cerr << "Bad tool schema config unexpectedly parsed successfully." << '\n';
+            cleanup();
+            return 1;
+        }
+        if (cfg.error().find("unsupported type: object") == std::string::npos) {
+            std::cerr << "Bad tool schema config failed for wrong reason: " << cfg.error()
+                      << '\n';
+            cleanup();
+            return 1;
+        }
     }
 
     // explicit http overrides
