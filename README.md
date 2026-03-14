@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="Zoo Keeper Server Logo" width="200" />
+</p>
+
 <h1 align="center">zoo-keeper-server</h1>
 
 <p align="center">
