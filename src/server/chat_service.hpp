@@ -19,6 +19,15 @@
 
 namespace zks::server {
 
+/// Compile-time tool registration passed to `ZooChatService::create()`.
+/// `metadata` is exposed via `/v1/tools`; `install` registers handlers on the agent at startup.
+struct ToolProvider {
+    std::vector<zoo::tools::ToolMetadata> metadata;
+    std::function<Result<void>(zoo::Agent&)> install = [](zoo::Agent&) -> Result<void> {
+        return {};
+    };
+};
+
 class ChatService {
   public:
     virtual ~ChatService() = default;
@@ -44,6 +53,8 @@ class ChatService {
 class ZooChatService final : public ChatService {
   public:
     static Result<std::shared_ptr<ZooChatService>> create(const ServerConfig& config);
+    static Result<std::shared_ptr<ZooChatService>> create(const ServerConfig& config,
+                                                           ToolProvider tools);
 
     ZooChatService(std::string model_id, std::string request_system_prompt,
                    std::vector<zoo::tools::ToolMetadata> tool_metadata,

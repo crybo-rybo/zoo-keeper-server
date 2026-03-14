@@ -7,21 +7,10 @@
 namespace zks::server {
 namespace {
 
-struct StartupTools {
-    std::vector<zoo::tools::ToolMetadata> metadata;
-    std::function<Result<void>(zoo::Agent&)> install = [](zoo::Agent&) -> Result<void> {
-        return {};
-    };
-};
-
 struct ConfiguredAgent {
     std::unique_ptr<zoo::Agent> agent;
     std::string request_system_prompt;
 };
-
-StartupTools make_startup_tools() {
-    return {};
-}
 
 std::string combine_system_prompts(const std::string& base_prompt,
                                    const std::string& request_prompt) {
@@ -35,7 +24,7 @@ std::string combine_system_prompts(const std::string& base_prompt,
 }
 
 Result<ConfiguredAgent> create_configured_agent(const zoo::Config& base_config,
-                                                const StartupTools& tools,
+                                                const ToolProvider& tools,
                                                 const std::optional<std::string>& extra_prompt) {
     zoo::Config config = base_config;
     const std::string effective_prompt =
@@ -71,8 +60,12 @@ std::int64_t now_seconds() {
 } // namespace
 
 Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfig& config) {
-    const auto startup_tools = make_startup_tools();
-    auto shared_result = create_configured_agent(config.zoo_config, startup_tools, std::nullopt);
+    return create(config, ToolProvider{});
+}
+
+Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfig& config,
+                                                                ToolProvider tools) {
+    auto shared_result = create_configured_agent(config.zoo_config, tools, std::nullopt);
     if (!shared_result) {
         return std::unexpected(shared_result.error());
     }
@@ -93,8 +86,8 @@ Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfi
         });
 
     return std::make_shared<ZooChatService>(
-        config.model_id, std::move(shared_result->request_system_prompt), startup_tools.metadata,
-        std::move(shared_agent), std::move(session_manager));
+        config.model_id, std::move(shared_result->request_system_prompt),
+        std::move(tools.metadata), std::move(shared_agent), std::move(session_manager));
 }
 
 ZooChatService::ZooChatService(std::string model_id, std::string request_system_prompt,
