@@ -11,6 +11,11 @@
 namespace zks::server {
 namespace {
 
+bool is_trusted_local_bind_address(std::string_view bind_address) {
+    return bind_address == "localhost" || bind_address == "::1" ||
+           bind_address.starts_with("127.");
+}
+
 template <size_t N>
 Result<void> reject_unknown_keys(const nlohmann::json& json, const char* context,
                                  const std::array<const char*, N>& allowed_keys) {
@@ -56,6 +61,9 @@ Result<void> ServerConfig::validate() const {
     }
     if (model_id.empty()) {
         return std::unexpected("model_id cannot be empty");
+    }
+    if (api_key.has_value() && api_key->empty()) {
+        return std::unexpected("api_key must not be empty");
     }
     if (auto validation = sessions.validate(); !validation) {
         return std::unexpected(validation.error());
@@ -111,10 +119,7 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
                 if (!it->is_string()) {
                     return std::unexpected(with_path_context(path, "api_key must be a string"));
                 }
-                std::string key = it->get<std::string>();
-                if (!key.empty()) {
-                    config.api_key = std::move(key);
-                }
+                config.api_key = it->get<std::string>();
             }
         }
         if (auto it = json.find("sessions"); it != json.end()) {
@@ -146,6 +151,16 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
     } catch (const std::exception& error) {
         return std::unexpected(with_path_context(path, error.what()));
     }
+}
+
+std::optional<std::string> startup_warning(const ServerConfig& config) {
+    const bool has_auth = config.api_key.has_value() && !config.api_key->empty();
+    if (!has_auth && !is_trusted_local_bind_address(config.bind_address)) {
+        return "Warning: binding a non-loopback address without api_key auth enabled. "
+               "Use only on a trusted network.";
+    }
+
+    return std::nullopt;
 }
 
 } // namespace zks::server

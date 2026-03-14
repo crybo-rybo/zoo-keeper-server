@@ -22,6 +22,10 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (auto warning = zks::server::startup_warning(*config_result); warning.has_value()) {
+        std::clog << *warning << '\n';
+    }
+
     auto runtime_result = zks::server::ServerRuntime::create(std::move(*config_result));
     if (!runtime_result) {
         std::cerr << "Config bootstrap failed: " << runtime_result.error() << '\n';

@@ -33,6 +33,7 @@ int main() {
 
     const auto valid_path = temp_dir / "valid.json";
     const auto invalid_path = temp_dir / "invalid.json";
+    const auto empty_api_key_path = temp_dir / "empty_api_key.json";
 
     if (!write_text_file(valid_path,
                          R"json({
@@ -66,6 +67,19 @@ int main() {
         return 1;
     }
 
+    if (!write_text_file(empty_api_key_path,
+                         R"json({
+  "model_id": "demo-model",
+  "api_key": "",
+  "zoo": {
+    "model_path": "/tmp/demo.gguf"
+  }
+})json")) {
+        std::cerr << "Failed to write empty api_key config fixture." << '\n';
+        cleanup();
+        return 1;
+    }
+
     auto valid_config = zks::server::load_config(valid_path);
     if (!valid_config) {
         std::cerr << "Valid config unexpectedly failed: " << valid_config.error() << '\n';
@@ -95,6 +109,63 @@ int main() {
                   << '\n';
         cleanup();
         return 1;
+    }
+
+    auto empty_api_key_config = zks::server::load_config(empty_api_key_path);
+    if (empty_api_key_config) {
+        std::cerr << "Empty api_key config unexpectedly parsed successfully." << '\n';
+        cleanup();
+        return 1;
+    }
+
+    if (empty_api_key_config.error().find("api_key must not be empty") == std::string::npos) {
+        std::cerr << "Empty api_key config failed for the wrong reason: "
+                  << empty_api_key_config.error() << '\n';
+        cleanup();
+        return 1;
+    }
+
+    {
+        zks::server::ServerConfig config;
+        config.bind_address = "0.0.0.0";
+        config.model_id = "demo-model";
+        config.zoo_config.model_path = "/tmp/demo.gguf";
+
+        const auto warning = zks::server::startup_warning(config);
+        if (!warning.has_value() ||
+            warning->find("non-loopback address without api_key auth enabled") ==
+                std::string::npos) {
+            std::cerr << "Expected startup warning for remote bind without auth." << '\n';
+            cleanup();
+            return 1;
+        }
+    }
+
+    {
+        zks::server::ServerConfig config;
+        config.bind_address = "127.0.0.1";
+        config.model_id = "demo-model";
+        config.zoo_config.model_path = "/tmp/demo.gguf";
+
+        if (zks::server::startup_warning(config).has_value()) {
+            std::cerr << "Loopback bind should not emit a startup warning." << '\n';
+            cleanup();
+            return 1;
+        }
+    }
+
+    {
+        zks::server::ServerConfig config;
+        config.bind_address = "0.0.0.0";
+        config.model_id = "demo-model";
+        config.api_key = "secret";
+        config.zoo_config.model_path = "/tmp/demo.gguf";
+
+        if (zks::server::startup_warning(config).has_value()) {
+            std::cerr << "Authenticated remote bind should not emit a startup warning." << '\n';
+            cleanup();
+            return 1;
+        }
     }
 
     cleanup();

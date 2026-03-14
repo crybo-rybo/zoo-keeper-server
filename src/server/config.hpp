@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include <zoo/core/types.hpp>
 
@@ -34,5 +35,6 @@ struct ServerConfig {
 };
 
 [[nodiscard]] Result<ServerConfig> load_config(const std::filesystem::path& path);
+[[nodiscard]] std::optional<std::string> startup_warning(const ServerConfig& config);
 
 } // namespace zks::server
