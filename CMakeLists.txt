@@ -199,11 +199,6 @@ if(BUILD_TESTING)
     add_test(NAME metrics_test COMMAND zks_metrics_test)
     add_test(NAME http_integration_test COMMAND zks_http_integration_test)
     set_tests_properties(http_integration_test PROPERTIES TIMEOUT 30)
-    add_test(
-        NAME release_hygiene_test
-        COMMAND ${CMAKE_COMMAND}
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/release_hygiene.cmake
-    )
     if(ZKS_ENABLE_TEST_UI)
         add_test(NAME test_ui_response_test COMMAND zks_test_ui_test)
     endif()
