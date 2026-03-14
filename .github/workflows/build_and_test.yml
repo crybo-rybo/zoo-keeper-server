@@ -1,4 +1,4 @@
-name: ci
+name: build_and_test
 
 on:
   push:
@@ -38,7 +38,7 @@ jobs:
         run: cmake -S . -B build -DBUILD_TESTING=ON
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.logicalcpu) --verbose
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
