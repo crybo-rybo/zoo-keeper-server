@@ -33,13 +33,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    zks::server::HttpServer server(*runtime_result,
-                                   zks::server::HttpServerOptions{
+    zks::server::HttpServer server(*runtime_result, zks::server::HttpServerOptions{
 #ifdef ZKS_ENABLE_TEST_UI
-                                       .enable_test_ui = true,
+                                                        .enable_test_ui = true,
 #else
-                                       .enable_test_ui = false,
+                                                        .enable_test_ui = false,
 #endif
-                                   });
+                                                    });
     return server.run();
 }

@@ -113,8 +113,7 @@ std::optional<std::filesystem::path> resolve_executable_path(const CommandToolCo
         const size_t end = path_env->find(':', start);
         std::string entry =
             path_env->substr(start, end == std::string::npos ? std::string::npos : end - start);
-        std::filesystem::path directory =
-            entry.empty() ? base_dir : std::filesystem::path(entry);
+        std::filesystem::path directory = entry.empty() ? base_dir : std::filesystem::path(entry);
         if (directory.is_relative()) {
             directory = base_dir / directory;
         }
@@ -147,11 +146,12 @@ Result<void> validate_enum_value_type(const nlohmann::json& value, std::string_v
     return {};
 }
 
-Result<void> validate_property_schema(std::string_view property_name, const nlohmann::json& schema) {
-    static constexpr std::array<std::string_view, 3> kAllowedPropertyKeys = {
-        "type", "description", "enum"};
-    if (auto unknown = reject_unknown_keys(schema, "tools.parameters property",
-                                           kAllowedPropertyKeys);
+Result<void> validate_property_schema(std::string_view property_name,
+                                      const nlohmann::json& schema) {
+    static constexpr std::array<std::string_view, 3> kAllowedPropertyKeys = {"type", "description",
+                                                                             "enum"};
+    if (auto unknown =
+            reject_unknown_keys(schema, "tools.parameters property", kAllowedPropertyKeys);
         !unknown) {
         return std::unexpected(unknown.error());
     }
@@ -204,8 +204,8 @@ Result<void> set_non_blocking(int fd, std::string_view label) {
                                std::strerror(errno));
     }
     if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
-        return std::unexpected("Failed to make " + std::string(label) + " non-blocking: " +
-                               std::strerror(errno));
+        return std::unexpected("Failed to make " + std::string(label) +
+                               " non-blocking: " + std::strerror(errno));
     }
     return {};
 }
@@ -251,8 +251,8 @@ CommandToolRunResult make_runtime_error(std::string message) {
     return std::unexpected(CommandToolRunError{std::move(message), false});
 }
 
-std::map<std::string, std::string, std::less<>> build_environment_map(
-    const CommandToolConfig& tool) {
+std::map<std::string, std::string, std::less<>>
+build_environment_map(const CommandToolConfig& tool) {
     std::map<std::string, std::string, std::less<>> environment;
     if (tool.inherit_environment) {
         for (char** env = environ; env && *env; ++env) {
@@ -324,7 +324,9 @@ Result<PreparedCommandTool> build_prepared_command_tool(const CommandToolConfig&
 class ScopedFd {
   public:
     explicit ScopedFd(int fd = -1) noexcept : fd_(fd) {}
-    ~ScopedFd() { reset(); }
+    ~ScopedFd() {
+        reset();
+    }
 
     ScopedFd(const ScopedFd&) = delete;
     ScopedFd& operator=(const ScopedFd&) = delete;
@@ -337,9 +339,15 @@ class ScopedFd {
         return *this;
     }
 
-    [[nodiscard]] int get() const noexcept { return fd_; }
-    [[nodiscard]] bool valid() const noexcept { return fd_ >= 0; }
-    explicit operator bool() const noexcept { return valid(); }
+    [[nodiscard]] int get() const noexcept {
+        return fd_;
+    }
+    [[nodiscard]] bool valid() const noexcept {
+        return fd_ >= 0;
+    }
+    explicit operator bool() const noexcept {
+        return valid();
+    }
 
     int release() noexcept {
         int fd = fd_;
@@ -393,7 +401,9 @@ class ScopedSpawnFileActions {
         return err;
     }
 
-    [[nodiscard]] posix_spawn_file_actions_t* get() noexcept { return &actions_; }
+    [[nodiscard]] posix_spawn_file_actions_t* get() noexcept {
+        return &actions_;
+    }
 
   private:
     posix_spawn_file_actions_t actions_{};
@@ -422,7 +432,9 @@ class ScopedSpawnAttr {
         return err;
     }
 
-    [[nodiscard]] posix_spawnattr_t* get() noexcept { return &attr_; }
+    [[nodiscard]] posix_spawnattr_t* get() noexcept {
+        return &attr_;
+    }
 
   private:
     posix_spawnattr_t attr_{};
@@ -432,7 +444,9 @@ class ScopedSpawnAttr {
 class ScopedChildProcess {
   public:
     explicit ScopedChildProcess(pid_t pid = -1) noexcept : pid_(pid) {}
-    ~ScopedChildProcess() { kill_and_wait(); }
+    ~ScopedChildProcess() {
+        kill_and_wait();
+    }
 
     ScopedChildProcess(const ScopedChildProcess&) = delete;
     ScopedChildProcess& operator=(const ScopedChildProcess&) = delete;
@@ -443,9 +457,15 @@ class ScopedChildProcess {
     }
     ScopedChildProcess& operator=(ScopedChildProcess&&) = delete;
 
-    [[nodiscard]] pid_t pid() const noexcept { return pid_; }
-    [[nodiscard]] int status() const noexcept { return status_; }
-    [[nodiscard]] bool waited() const noexcept { return waited_; }
+    [[nodiscard]] pid_t pid() const noexcept {
+        return pid_;
+    }
+    [[nodiscard]] int status() const noexcept {
+        return status_;
+    }
+    [[nodiscard]] bool waited() const noexcept {
+        return waited_;
+    }
 
     Result<bool> try_wait() {
         if (waited_) {
@@ -529,22 +549,19 @@ CommandToolRunResult run_prepared_command_tool(const PreparedCommandTool& prepar
         return std::string(message) + ": " + std::strerror(err);
     };
 
-    if (auto err = add_action(
-            posix_spawn_file_actions_adddup2(file_actions.get(), stdin_pipe->read_end.get(),
-                                             STDIN_FILENO),
-            "Failed to wire tool stdin")) {
+    if (auto err = add_action(posix_spawn_file_actions_adddup2(
+                                  file_actions.get(), stdin_pipe->read_end.get(), STDIN_FILENO),
+                              "Failed to wire tool stdin")) {
         return make_runtime_error(std::move(*err));
     }
-    if (auto err = add_action(
-            posix_spawn_file_actions_adddup2(file_actions.get(), stdout_pipe->write_end.get(),
-                                             STDOUT_FILENO),
-            "Failed to wire tool stdout")) {
+    if (auto err = add_action(posix_spawn_file_actions_adddup2(
+                                  file_actions.get(), stdout_pipe->write_end.get(), STDOUT_FILENO),
+                              "Failed to wire tool stdout")) {
         return make_runtime_error(std::move(*err));
     }
-    if (auto err = add_action(
-            posix_spawn_file_actions_adddup2(file_actions.get(), stderr_pipe->write_end.get(),
-                                             STDERR_FILENO),
-            "Failed to wire tool stderr")) {
+    if (auto err = add_action(posix_spawn_file_actions_adddup2(
+                                  file_actions.get(), stderr_pipe->write_end.get(), STDERR_FILENO),
+                              "Failed to wire tool stderr")) {
         return make_runtime_error(std::move(*err));
     }
     if (auto err = add_action(
@@ -565,10 +582,10 @@ CommandToolRunResult run_prepared_command_tool(const PreparedCommandTool& prepar
 
     if (prepared.config.working_directory.has_value()) {
 #if defined(__APPLE__) || defined(__linux__)
-        if (auto err = add_action(
-                posix_spawn_file_actions_addchdir_np(file_actions.get(),
-                                                     prepared.config.working_directory->c_str()),
-                "Failed to configure child working directory")) {
+        if (auto err =
+                add_action(posix_spawn_file_actions_addchdir_np(
+                               file_actions.get(), prepared.config.working_directory->c_str()),
+                           "Failed to configure child working directory")) {
             return make_runtime_error(std::move(*err));
         }
 #else
@@ -623,8 +640,8 @@ CommandToolRunResult run_prepared_command_tool(const PreparedCommandTool& prepar
     bool timed_out = false;
     CapturedStream stdout_capture;
     CapturedStream stderr_capture;
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::milliseconds(prepared.config.timeout_ms);
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(prepared.config.timeout_ms);
 
     while (true) {
         auto wait_result = child.try_wait();
@@ -670,9 +687,8 @@ CommandToolRunResult run_prepared_command_tool(const PreparedCommandTool& prepar
 
         int poll_timeout_ms = 10;
         if (!child.waited()) {
-            const auto remaining =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    deadline - std::chrono::steady_clock::now());
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now());
             poll_timeout_ms = remaining.count() <= 0
                                   ? 0
                                   : static_cast<int>(std::min<std::int64_t>(remaining.count(), 10));
@@ -735,8 +751,8 @@ CommandToolRunResult run_prepared_command_tool(const PreparedCommandTool& prepar
 
         if (stderr_index >= 0 &&
             (poll_fds[stderr_index].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
-            auto read_result =
-                read_available(stderr_pipe->read_end.get(), stderr_capture, kMaxCapturedStderrBytes);
+            auto read_result = read_available(stderr_pipe->read_end.get(), stderr_capture,
+                                              kMaxCapturedStderrBytes);
             if (!read_result) {
                 return make_runtime_error("Failed to read tool stderr: " + read_result.error());
             }
@@ -870,7 +886,8 @@ Result<void> CommandToolConfig::validate() const {
     return {};
 }
 
-CommandToolRunResult run_command_tool(const CommandToolConfig& tool, const nlohmann::json& arguments) {
+CommandToolRunResult run_command_tool(const CommandToolConfig& tool,
+                                      const nlohmann::json& arguments) {
     auto prepared = build_prepared_command_tool(tool);
     if (!prepared) {
         return make_runtime_error(prepared.error());
@@ -891,8 +908,7 @@ Result<ToolProvider> make_command_tool_provider(const std::vector<CommandToolCon
         auto shared = std::make_shared<const PreparedCommandTool>(std::move(*prepared));
         provider.tools.push_back(RegisteredTool{
             .definition = ToolDefinition{tool.name, tool.description, tool.parameters_schema},
-            .invoke =
-                [shared](const nlohmann::json& arguments) -> RuntimeResult<nlohmann::json> {
+            .invoke = [shared](const nlohmann::json& arguments) -> RuntimeResult<nlohmann::json> {
                 auto result = run_prepared_command_tool(*shared, arguments);
                 if (!result) {
                     return std::unexpected(RuntimeError{

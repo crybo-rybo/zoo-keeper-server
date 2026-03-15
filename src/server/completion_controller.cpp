@@ -44,14 +44,15 @@ void log_request_start(const PendingChatCompletion& pending, const ChatCompletio
 
 void log_request_result(const PendingChatCompletion& pending, const ChatCompletionRequest& request,
                         const RuntimeResult<CompletionResult>& result) {
-    std::clog << "[request] event=finish completion_id=" << pending.id << " model=" << pending.model;
+    std::clog << "[request] event=finish completion_id=" << pending.id
+              << " model=" << pending.model;
     if (request.session_id.has_value()) {
         std::clog << " session_id=" << *request.session_id;
     }
 
     if (!result) {
-        std::clog << " status=error code=" << static_cast<int>(result.error().code)
-                  << " message=\"" << result.error().message << "\"\n";
+        std::clog << " status=error code=" << static_cast<int>(result.error().code) << " message=\""
+                  << result.error().message << "\"\n";
         return;
     }
 
@@ -146,26 +147,22 @@ class StreamingSession {
 
             if (!sent_role_) {
                 if (response.text.empty()) {
-                    all_deferred.push_back(push_frame_locked(
-                        make_chat_completion_chunk(completion_id_, created_, model_id_,
-                                                   std::nullopt, true, std::nullopt)));
+                    all_deferred.push_back(push_frame_locked(make_chat_completion_chunk(
+                        completion_id_, created_, model_id_, std::nullopt, true, std::nullopt)));
                 } else {
-                    all_deferred.push_back(push_frame_locked(
-                        make_chat_completion_chunk(completion_id_, created_, model_id_,
-                                                   response.text, true, std::nullopt)));
+                    all_deferred.push_back(push_frame_locked(make_chat_completion_chunk(
+                        completion_id_, created_, model_id_, response.text, true, std::nullopt)));
                     sent_content_ = true;
                 }
                 sent_role_ = true;
             } else if (!sent_content_ && !response.text.empty()) {
-                all_deferred.push_back(push_frame_locked(
-                    make_chat_completion_chunk(completion_id_, created_, model_id_,
-                                               response.text, false, std::nullopt)));
+                all_deferred.push_back(push_frame_locked(make_chat_completion_chunk(
+                    completion_id_, created_, model_id_, response.text, false, std::nullopt)));
                 sent_content_ = true;
             }
 
-            all_deferred.push_back(push_frame_locked(
-                make_chat_completion_chunk(completion_id_, created_, model_id_, std::nullopt,
-                                           false, "stop")));
+            all_deferred.push_back(push_frame_locked(make_chat_completion_chunk(
+                completion_id_, created_, model_id_, std::nullopt, false, "stop")));
             all_deferred.push_back(push_frame_locked(make_sse_done()));
         }
 
@@ -319,8 +316,7 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
     // ChatCompletionRequest which includes the full message vector.
     auto submit_result = runtime->submit_background(
         [callback = std::move(callback), pending = std::move(*pending),
-         session_id = request.session_id, is_stream = request.stream,
-         runtime]() mutable {
+         session_id = request.session_id, is_stream = request.stream, runtime]() mutable {
             // Reconstruct a minimal request-like view for logging
             ChatCompletionRequest log_request;
             log_request.session_id = std::move(session_id);
@@ -343,8 +339,8 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
     if (!submit_result) {
         pending->cancel();
         release_completion(*pending);
-        callback(make_error_response(service_unavailable_error(
-            "Server continuation executor is saturated", "server_busy")));
+        callback(make_error_response(
+            service_unavailable_error("Server continuation executor is saturated", "server_busy")));
     }
 }
 
@@ -389,8 +385,8 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
     std::optional<DisconnectRegistry::CallbackId> callback_id;
     auto weak_connection = request->getConnectionPtr();
     if (auto connection = weak_connection.lock()) {
-        callback_id = disconnect_registry->track(
-            connection, [session, cancel = pending->cancel, runtime] {
+        callback_id =
+            disconnect_registry->track(connection, [session, cancel = pending->cancel, runtime] {
                 session->close();
                 cancel();
                 runtime->metrics().increment_stream_disconnects();
@@ -433,8 +429,8 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
         }
         pending->cancel();
         release_completion(*pending);
-        callback(make_error_response(service_unavailable_error(
-            "Server continuation executor is saturated", "server_busy")));
+        callback(make_error_response(
+            service_unavailable_error("Server continuation executor is saturated", "server_busy")));
         return;
     }
 
@@ -449,9 +445,9 @@ void register_chat_completion_route(
     std::weak_ptr<ServerRuntime> weak_runtime = runtime;
     app.registerHandler(
         "/v1/chat/completions",
-        [weak_runtime, disconnect_registry](const drogon::HttpRequestPtr& request,
-                                            std::function<void(const drogon::HttpResponsePtr&)>&&
-                                                callback) {
+        [weak_runtime,
+         disconnect_registry](const drogon::HttpRequestPtr& request,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
             auto runtime = weak_runtime.lock();
             if (!runtime) {
                 callback(make_error_response(

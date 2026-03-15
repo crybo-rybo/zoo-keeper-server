@@ -35,16 +35,16 @@ drogon::HttpResponsePtr make_test_ui_response(const HealthSnapshot& snapshot) {
     const std::string_view html_suffix(reinterpret_cast<const char*>(kTestUiJsData),
                                        kTestUiJsData_len);
 
-    const auto boot_payload = escape_script_json(
-        nlohmann::json{{"health",
-                        {{"ready", snapshot.ready},
-                         {"model", {{"id", snapshot.model_id}}},
-                         {"sessions",
-                          {{"enabled", snapshot.sessions.enabled},
-                           {"active", snapshot.sessions.active},
-                           {"max_sessions", snapshot.sessions.max_sessions},
-                           {"idle_ttl_seconds", snapshot.sessions.idle_ttl_seconds}}}}}}
-            .dump());
+    const auto boot_payload = escape_script_json(nlohmann::json{
+        {"health",
+         {{"ready", snapshot.ready},
+          {"model", {{"id", snapshot.model_id}}},
+          {"sessions",
+           {{"enabled", snapshot.sessions.enabled},
+            {"active", snapshot.sessions.active},
+            {"max_sessions", snapshot.sessions.max_sessions},
+            {"idle_ttl_seconds",
+             snapshot.sessions.idle_ttl_seconds}}}}}}.dump());
 
     auto response = drogon::HttpResponse::newHttpResponse();
     response->setStatusCode(drogon::k200OK);

@@ -21,8 +21,8 @@ size_t continuation_worker_count() {
 }
 
 size_t continuation_queue_depth(const ServerConfig& config) {
-    const size_t request_capacity = std::max<size_t>(
-        1, static_cast<size_t>(config.zoo_config.request_queue_capacity));
+    const size_t request_capacity =
+        std::max<size_t>(1, static_cast<size_t>(config.zoo_config.request_queue_capacity));
     return std::max<size_t>(32, request_capacity * 2);
 }
 } // namespace
@@ -42,8 +42,8 @@ Result<std::shared_ptr<ServerRuntime>> ServerRuntime::create(ServerConfig config
         new ServerRuntime(std::move(config), std::move(*chat_service_result)));
 }
 
-std::shared_ptr<ServerRuntime> ServerRuntime::create_for_test(
-    ServerConfig config, std::shared_ptr<ChatService> chat_service) {
+std::shared_ptr<ServerRuntime>
+ServerRuntime::create_for_test(ServerConfig config, std::shared_ptr<ChatService> chat_service) {
     return std::shared_ptr<ServerRuntime>(
         new ServerRuntime(std::move(config), std::move(chat_service)));
 }

@@ -19,8 +19,7 @@ class PromiseCompletionSource final : public zks::server::CompletionSource {
         std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future)
         : future_(std::move(future)) {}
 
-    [[nodiscard]] std::future_status
-    wait_for(std::chrono::milliseconds timeout) const override {
+    [[nodiscard]] std::future_status wait_for(std::chrono::milliseconds timeout) const override {
         std::lock_guard<std::mutex> lock(mutex_);
         if (consumed_) {
             return std::future_status::ready;
@@ -56,9 +55,8 @@ struct SubmittedRequest {
 
 class FakeExecutor {
   public:
-    zks::server::CompletionHandle start(
-        std::vector<zks::server::ChatMessage> messages,
-        std::optional<zks::server::TokenCallback> callback) {
+    zks::server::CompletionHandle start(std::vector<zks::server::ChatMessage> messages,
+                                        std::optional<zks::server::TokenCallback> callback) {
         auto request = std::make_shared<SubmittedRequest>();
         request->id = next_request_id_++;
         request->messages = std::move(messages);
@@ -152,8 +150,8 @@ TEST(SessionManagerTest, CreateSessionAndCommitHistory) {
     EXPECT_EQ(created->id, "sess-1");
     EXPECT_EQ(executor.request_count(), 0u);
 
-    auto pending = manager->start_completion(make_chat_request(created->id, "Hello"),
-                                             next_completion_id);
+    auto pending =
+        manager->start_completion(make_chat_request(created->id, "Hello"), next_completion_id);
     ASSERT_TRUE(pending.has_value());
 
     const std::vector<zks::server::ChatMessage> expected_first = {
@@ -168,8 +166,8 @@ TEST(SessionManagerTest, CreateSessionAndCommitHistory) {
     ASSERT_TRUE(observed.has_value());
     EXPECT_EQ(observed->text, "Hi there");
 
-    auto second = manager->start_completion(make_chat_request(created->id, "Follow up"),
-                                            next_completion_id);
+    auto second =
+        manager->start_completion(make_chat_request(created->id, "Follow up"), next_completion_id);
     ASSERT_TRUE(second.has_value());
 
     const std::vector<zks::server::ChatMessage> expected_second = {
@@ -194,8 +192,8 @@ TEST(SessionManagerTest, FailedTurnDoesNotMutateHistory) {
     auto created = manager->create_session({"local-model", std::nullopt});
     ASSERT_TRUE(created.has_value());
 
-    auto pending = manager->start_completion(make_chat_request(created->id, "Hello"),
-                                             next_completion_id);
+    auto pending =
+        manager->start_completion(make_chat_request(created->id, "Hello"), next_completion_id);
     ASSERT_TRUE(pending.has_value());
 
     auto error = std::unexpected(zks::server::RuntimeError{
@@ -205,8 +203,8 @@ TEST(SessionManagerTest, FailedTurnDoesNotMutateHistory) {
     auto observed = finish_pending(*pending, executor.request(0), error);
     EXPECT_FALSE(observed.has_value());
 
-    auto retry = manager->start_completion(make_chat_request(created->id, "Retry"),
-                                           next_completion_id);
+    auto retry =
+        manager->start_completion(make_chat_request(created->id, "Retry"), next_completion_id);
     ASSERT_TRUE(retry.has_value());
 
     const std::vector<zks::server::ChatMessage> expected_retry = {
@@ -232,17 +230,17 @@ TEST(SessionManagerTest, SameSessionBusyDifferentSessionsCanQueue) {
     ASSERT_TRUE(session_a.has_value());
     ASSERT_TRUE(session_b.has_value());
 
-    auto first = manager->start_completion(make_chat_request(session_a->id, "A1"),
-                                           next_completion_id);
+    auto first =
+        manager->start_completion(make_chat_request(session_a->id, "A1"), next_completion_id);
     ASSERT_TRUE(first.has_value());
 
-    auto busy = manager->start_completion(make_chat_request(session_a->id, "A2"),
-                                          next_completion_id);
+    auto busy =
+        manager->start_completion(make_chat_request(session_a->id, "A2"), next_completion_id);
     ASSERT_FALSE(busy.has_value());
     EXPECT_EQ(busy.error().http_status, 409);
 
-    auto second = manager->start_completion(make_chat_request(session_b->id, "B1"),
-                                            next_completion_id);
+    auto second =
+        manager->start_completion(make_chat_request(session_b->id, "B1"), next_completion_id);
     ASSERT_TRUE(second.has_value());
     EXPECT_EQ(executor.request_count(), 2u);
 
@@ -262,8 +260,8 @@ TEST(SessionManagerTest, DeleteActiveSessionCancelsRequest) {
     auto created = manager->create_session({"local-model", std::nullopt});
     ASSERT_TRUE(created.has_value());
 
-    auto pending = manager->start_completion(make_chat_request(created->id, "Hello"),
-                                             next_completion_id);
+    auto pending =
+        manager->start_completion(make_chat_request(created->id, "Hello"), next_completion_id);
     ASSERT_TRUE(pending.has_value());
     auto submitted = executor.request(0);
 
@@ -303,21 +301,21 @@ TEST(SessionManagerTest, HistoryTrimsOldestTurns) {
     auto created = manager->create_session({"local-model", std::nullopt});
     ASSERT_TRUE(created.has_value());
 
-    auto first = manager->start_completion(make_chat_request(created->id, "One"),
-                                           next_completion_id);
+    auto first =
+        manager->start_completion(make_chat_request(created->id, "One"), next_completion_id);
     ASSERT_TRUE(first.has_value());
     zks::server::CompletionResult response;
     response.text = "One answer";
     finish_pending(*first, executor.request(0), response);
 
-    auto second = manager->start_completion(make_chat_request(created->id, "Two"),
-                                            next_completion_id);
+    auto second =
+        manager->start_completion(make_chat_request(created->id, "Two"), next_completion_id);
     ASSERT_TRUE(second.has_value());
     response.text = "Two answer";
     finish_pending(*second, executor.request(1), response);
 
-    auto third = manager->start_completion(make_chat_request(created->id, "Three"),
-                                           next_completion_id);
+    auto third =
+        manager->start_completion(make_chat_request(created->id, "Three"), next_completion_id);
     ASSERT_TRUE(third.has_value());
 
     const std::vector<zks::server::ChatMessage> expected = {

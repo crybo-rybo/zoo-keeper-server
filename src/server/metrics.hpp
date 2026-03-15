@@ -94,8 +94,8 @@ class ServerMetrics {
     }
 
     [[nodiscard]] int64_t uptime_seconds() const noexcept {
-        return std::chrono::duration_cast<std::chrono::seconds>(
-                   std::chrono::steady_clock::now() - start_time_)
+        return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() -
+                                                                start_time_)
             .count();
     }
 

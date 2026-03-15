@@ -12,7 +12,8 @@
 namespace {
 
 struct Probe {
-    explicit Probe(std::shared_ptr<std::atomic<int>> destroyed) : destroyed_(std::move(destroyed)) {}
+    explicit Probe(std::shared_ptr<std::atomic<int>> destroyed)
+        : destroyed_(std::move(destroyed)) {}
 
     ~Probe() {
         destroyed_->fetch_add(1, std::memory_order_relaxed);
@@ -37,9 +38,9 @@ TEST(RuntimeTest, StopDrainsBackgroundTasks) {
 
     auto submitted =
         runtime->submit_background([probe = std::make_shared<Probe>(destroyed), started]() mutable {
-        started->store(true, std::memory_order_release);
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    });
+            started->store(true, std::memory_order_release);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        });
     ASSERT_TRUE(submitted);
 
     while (!started->load(std::memory_order_acquire)) {

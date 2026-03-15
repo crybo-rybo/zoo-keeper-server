@@ -34,8 +34,8 @@ class ServerRuntime {
     static Result<std::shared_ptr<ServerRuntime>> create(ServerConfig config);
 
     /// Creates a ServerRuntime for tests, bypassing model loading and tool validation.
-    static std::shared_ptr<ServerRuntime> create_for_test(
-        ServerConfig config, std::shared_ptr<ChatService> chat_service);
+    static std::shared_ptr<ServerRuntime>
+    create_for_test(ServerConfig config, std::shared_ptr<ChatService> chat_service);
 
     ~ServerRuntime();
 

@@ -26,9 +26,7 @@ TEST(ExecutorTest, SubmitRunsTaskOnWorkerThread) {
     zks::server::BoundedExecutor executor(1, 4);
     std::atomic<bool> ran{false};
 
-    auto result = executor.submit([&ran] {
-        ran.store(true, std::memory_order_release);
-    });
+    auto result = executor.submit([&ran] { ran.store(true, std::memory_order_release); });
     ASSERT_TRUE(result.has_value());
 
     busy_wait(ran);
@@ -88,9 +86,7 @@ TEST(ExecutorTest, DestructorCallsStop) {
     std::atomic<bool> ran{false};
     {
         zks::server::BoundedExecutor executor(1, 4);
-        executor.submit([&ran] {
-            ran.store(true, std::memory_order_release);
-        });
+        executor.submit([&ran] { ran.store(true, std::memory_order_release); });
     }
     EXPECT_TRUE(ran.load());
 }
@@ -99,9 +95,7 @@ TEST(ExecutorTest, WorkerCountZeroNormalizesToOne) {
     zks::server::BoundedExecutor executor(0, 4);
     std::atomic<bool> ran{false};
 
-    executor.submit([&ran] {
-        ran.store(true, std::memory_order_release);
-    });
+    executor.submit([&ran] { ran.store(true, std::memory_order_release); });
     busy_wait(ran);
     EXPECT_TRUE(ran.load());
 }
@@ -110,9 +104,7 @@ TEST(ExecutorTest, MaxPendingTasksZeroNormalizesToOne) {
     zks::server::BoundedExecutor executor(1, 0);
     std::atomic<bool> ran{false};
 
-    executor.submit([&ran] {
-        ran.store(true, std::memory_order_release);
-    });
+    executor.submit([&ran] { ran.store(true, std::memory_order_release); });
     busy_wait(ran);
     EXPECT_TRUE(ran.load());
 }
@@ -125,9 +117,7 @@ TEST(ExecutorTest, ExceptionsInTasksDoNotKillWorkers) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     std::atomic<bool> ran{false};
-    executor.submit([&ran] {
-        ran.store(true, std::memory_order_release);
-    });
+    executor.submit([&ran] { ran.store(true, std::memory_order_release); });
     busy_wait(ran);
     EXPECT_TRUE(ran.load());
 }

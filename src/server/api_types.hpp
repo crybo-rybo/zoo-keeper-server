@@ -150,8 +150,7 @@ class CompletionSource {
   public:
     virtual ~CompletionSource() = default;
 
-    [[nodiscard]] virtual std::future_status
-    wait_for(std::chrono::milliseconds timeout) const = 0;
+    [[nodiscard]] virtual std::future_status wait_for(std::chrono::milliseconds timeout) const = 0;
     virtual RuntimeResult<CompletionResult> get() = 0;
 };
 
@@ -182,11 +181,13 @@ inline ApiError server_error(std::string message, std::optional<std::string> cod
     return ApiError{500, std::move(message), "server_error", std::nullopt, std::move(code)};
 }
 
-inline ApiError not_found_error(std::string message, std::optional<std::string> code = std::nullopt) {
+inline ApiError not_found_error(std::string message,
+                                std::optional<std::string> code = std::nullopt) {
     return ApiError{404, std::move(message), "not_found_error", std::nullopt, std::move(code)};
 }
 
-inline ApiError conflict_error(std::string message, std::optional<std::string> code = std::nullopt) {
+inline ApiError conflict_error(std::string message,
+                               std::optional<std::string> code = std::nullopt) {
     return ApiError{409, std::move(message), "conflict_error", std::nullopt, std::move(code)};
 }
 

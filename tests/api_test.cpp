@@ -120,22 +120,19 @@ TEST(ApiTest, RuntimeErrorToApiErrorMapping) {
     EXPECT_EQ(queue_full.type, "service_unavailable_error");
     EXPECT_EQ(queue_full.code, std::optional<std::string>{"queue_full"});
 
-    auto invalid_sequence = zks::server::map_runtime_error_to_api_error(
-        zks::server::RuntimeError{zks::server::RuntimeErrorCode::InvalidMessageSequence,
-                                  "bad sequence"});
+    auto invalid_sequence = zks::server::map_runtime_error_to_api_error(zks::server::RuntimeError{
+        zks::server::RuntimeErrorCode::InvalidMessageSequence, "bad sequence"});
     EXPECT_EQ(invalid_sequence.http_status, 400);
     EXPECT_EQ(invalid_sequence.type, "invalid_request_error");
 
-    auto model_load_failed = zks::server::map_runtime_error_to_api_error(
-        zks::server::RuntimeError{zks::server::RuntimeErrorCode::ModelLoadFailed,
-                                  "model not found"});
+    auto model_load_failed = zks::server::map_runtime_error_to_api_error(zks::server::RuntimeError{
+        zks::server::RuntimeErrorCode::ModelLoadFailed, "model not found"});
     EXPECT_EQ(model_load_failed.http_status, 500);
     EXPECT_EQ(model_load_failed.type, "server_error");
     EXPECT_EQ(model_load_failed.code, std::optional<std::string>{"model_load_failed"});
 
     auto inference_failed = zks::server::map_runtime_error_to_api_error(
-        zks::server::RuntimeError{zks::server::RuntimeErrorCode::InferenceFailed,
-                                  "decode failed"});
+        zks::server::RuntimeError{zks::server::RuntimeErrorCode::InferenceFailed, "decode failed"});
     EXPECT_EQ(inference_failed.http_status, 500);
     EXPECT_EQ(inference_failed.code, std::optional<std::string>{"inference_failed"});
 
@@ -145,16 +142,14 @@ TEST(ApiTest, RuntimeErrorToApiErrorMapping) {
     EXPECT_EQ(tool_not_found.type, "invalid_request_error");
     EXPECT_EQ(tool_not_found.code, std::optional<std::string>{"tool_not_found"});
 
-    auto tool_retries = zks::server::map_runtime_error_to_api_error(
-        zks::server::RuntimeError{zks::server::RuntimeErrorCode::ToolRetriesExhausted,
-                                  "retries exceeded"});
+    auto tool_retries = zks::server::map_runtime_error_to_api_error(zks::server::RuntimeError{
+        zks::server::RuntimeErrorCode::ToolRetriesExhausted, "retries exceeded"});
     EXPECT_EQ(tool_retries.http_status, 500);
     EXPECT_EQ(tool_retries.type, "server_error");
     EXPECT_EQ(tool_retries.code, std::optional<std::string>{"tool_retries_exhausted"});
 
-    auto template_failed = zks::server::map_runtime_error_to_api_error(
-        zks::server::RuntimeError{zks::server::RuntimeErrorCode::TemplateRenderFailed,
-                                  "render error"});
+    auto template_failed = zks::server::map_runtime_error_to_api_error(zks::server::RuntimeError{
+        zks::server::RuntimeErrorCode::TemplateRenderFailed, "render error"});
     EXPECT_EQ(template_failed.http_status, 500);
     EXPECT_EQ(template_failed.code, std::optional<std::string>{"template_render_failed"});
 

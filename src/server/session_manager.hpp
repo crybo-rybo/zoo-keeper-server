@@ -61,9 +61,10 @@ class SessionManager {
     ApiResult<SessionSummary> get_session(std::string_view session_id);
     ApiResult<void> delete_session(std::string_view session_id);
 
-    ApiResult<PendingChatCompletion> start_completion(
-        const ChatCompletionRequest& request, std::atomic<std::uint64_t>& next_completion_id,
-        std::optional<std::function<void(std::string_view)>> callback = std::nullopt);
+    ApiResult<PendingChatCompletion>
+    start_completion(const ChatCompletionRequest& request,
+                     std::atomic<std::uint64_t>& next_completion_id,
+                     std::optional<std::function<void(std::string_view)>> callback = std::nullopt);
 
     void stop();
 
@@ -106,8 +107,8 @@ class SessionManager {
     RequestCanceler request_canceler_;
     std::atomic<std::uint64_t> next_session_id_{1};
     mutable std::mutex mutex_;
-    std::unordered_map<std::string, std::shared_ptr<SessionState>,
-                       TransparentStringHash, TransparentStringEqual>
+    std::unordered_map<std::string, std::shared_ptr<SessionState>, TransparentStringHash,
+                       TransparentStringEqual>
         sessions_;
     bool stopping_ = false;
 };

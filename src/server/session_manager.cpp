@@ -47,8 +47,8 @@ void trim_history_to_fit(std::vector<ChatMessage>& messages, size_t max_history_
 
 void log_session_event(std::string_view event, std::string_view session_id,
                        std::string_view detail) {
-    std::clog << "[session] event=" << event << " session_id=" << session_id
-              << " detail=\"" << detail << "\"" << '\n';
+    std::clog << "[session] event=" << event << " session_id=" << session_id << " detail=\""
+              << detail << "\"" << '\n';
 }
 
 } // namespace
@@ -91,8 +91,8 @@ void SessionManager::reap_expired_sessions_locked(
         bool should_expire = false;
         {
             std::lock_guard<std::mutex> session_lock(session->mutex);
-            should_expire =
-                !session->closed && !session->active_request.has_value() && session->expires_at <= now;
+            should_expire = !session->closed && !session->active_request.has_value() &&
+                            session->expires_at <= now;
             if (should_expire) {
                 session->closed = true;
             }
@@ -165,8 +165,8 @@ ApiResult<SessionSummary> SessionManager::create_session(const SessionCreateRequ
     }
 
     if (capacity_reached) {
-        return std::unexpected(service_unavailable_error(
-            "Session capacity reached", "session_capacity_reached"));
+        return std::unexpected(
+            service_unavailable_error("Session capacity reached", "session_capacity_reached"));
     }
 
     log_session_event("created", session_id, "session ready");
@@ -185,8 +185,8 @@ ApiResult<SessionSummary> SessionManager::get_session(std::string_view session_i
         reap_expired_sessions_locked(now_seconds(), expired);
         auto it = sessions_.find(session_id);
         if (it == sessions_.end()) {
-            return std::unexpected(
-                not_found_error("Unknown session: " + std::string(session_id), "session_not_found"));
+            return std::unexpected(not_found_error("Unknown session: " + std::string(session_id),
+                                                   "session_not_found"));
         }
         session = it->second;
     }
@@ -208,8 +208,8 @@ ApiResult<void> SessionManager::delete_session(std::string_view session_id) {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = sessions_.find(session_id);
         if (it == sessions_.end()) {
-            return std::unexpected(
-                not_found_error("Unknown session: " + std::string(session_id), "session_not_found"));
+            return std::unexpected(not_found_error("Unknown session: " + std::string(session_id),
+                                                   "session_not_found"));
         }
         session = it->second;
         sessions_.erase(it);
@@ -229,9 +229,10 @@ ApiResult<void> SessionManager::delete_session(std::string_view session_id) {
     return {};
 }
 
-ApiResult<PendingChatCompletion> SessionManager::start_completion(
-    const ChatCompletionRequest& request, std::atomic<std::uint64_t>& next_completion_id,
-    std::optional<TokenCallback> callback) {
+ApiResult<PendingChatCompletion>
+SessionManager::start_completion(const ChatCompletionRequest& request,
+                                 std::atomic<std::uint64_t>& next_completion_id,
+                                 std::optional<TokenCallback> callback) {
     if (!enabled()) {
         return std::unexpected(disabled_error());
     }
@@ -243,9 +244,9 @@ ApiResult<PendingChatCompletion> SessionManager::start_completion(
             invalid_request_error("Unknown model: " + request.model, "model", "invalid_model"));
     }
     if (request.messages.size() != 1u || request.messages.front().role != MessageRole::User) {
-        return std::unexpected(invalid_request_error(
-            "Session chat requests must contain exactly one user message", "messages",
-            "invalid_message_sequence"));
+        return std::unexpected(
+            invalid_request_error("Session chat requests must contain exactly one user message",
+                                  "messages", "invalid_message_sequence"));
     }
 
     std::shared_ptr<SessionState> session;
@@ -299,8 +300,8 @@ ApiResult<PendingChatCompletion> SessionManager::start_completion(
         started_at,
         model_id_,
         std::move(handle),
-        [this, session, request_id = session->active_request.value(), user_message](
-            const RuntimeResult<CompletionResult>& result) {
+        [this, session, request_id = session->active_request.value(),
+         user_message](const RuntimeResult<CompletionResult>& result) {
             finish_request(session, request_id, user_message, result);
         },
         [this, request_id = session->active_request.value()] { request_canceler_(request_id); },

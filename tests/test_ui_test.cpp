@@ -6,8 +6,8 @@
 #include <string>
 
 TEST(TestUiTest, ResponseContent) {
-    const auto response = zks::server::make_test_ui_response(
-        {true, "demo-model", {true, 1u, 4u, 900u}});
+    const auto response =
+        zks::server::make_test_ui_response({true, "demo-model", {true, 1u, 4u, 900u}});
 
     EXPECT_EQ(response->getStatusCode(), drogon::k200OK);
     EXPECT_EQ(response->contentType(), drogon::CT_TEXT_HTML);
@@ -16,14 +16,8 @@ TEST(TestUiTest, ResponseContent) {
 
     const std::string body(response->getBody());
     const std::array<std::string_view, 8> expected_fragments = {
-        "GET /_test",
-        "/healthz",
-        "/v1/models",
-        "/v1/tools",
-        "/v1/sessions",
-        "/v1/chat/completions",
-        "Send message",
-        "Create session",
+        "GET /_test",           "/healthz",     "/v1/models",     "/v1/tools", "/v1/sessions",
+        "/v1/chat/completions", "Send message", "Create session",
     };
 
     for (const auto fragment : expected_fragments) {

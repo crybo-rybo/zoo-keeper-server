@@ -41,8 +41,7 @@ int HttpServer::run() {
     if (!config.http.cors_allow_origins.empty()) {
         const auto cors_origins = config.http.cors_allow_origins;
         app.registerPostHandlingAdvice(
-            [cors_origins](const drogon::HttpRequestPtr& req,
-                           const drogon::HttpResponsePtr& resp) {
+            [cors_origins](const drogon::HttpRequestPtr& req, const drogon::HttpResponsePtr& resp) {
                 const auto origin = req->getHeader("Origin");
                 if (origin.empty()) {
                     return;
