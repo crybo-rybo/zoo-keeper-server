@@ -38,7 +38,14 @@ Result<std::shared_ptr<ServerRuntime>> ServerRuntime::create(ServerConfig config
         return std::unexpected(chat_service_result.error());
     }
 
-    return std::make_shared<ServerRuntime>(std::move(config), std::move(*chat_service_result));
+    return std::shared_ptr<ServerRuntime>(
+        new ServerRuntime(std::move(config), std::move(*chat_service_result)));
+}
+
+std::shared_ptr<ServerRuntime> ServerRuntime::create_for_test(
+    ServerConfig config, std::shared_ptr<ChatService> chat_service) {
+    return std::shared_ptr<ServerRuntime>(
+        new ServerRuntime(std::move(config), std::move(chat_service)));
 }
 
 ServerRuntime::ServerRuntime(ServerConfig config, std::shared_ptr<ChatService> chat_service)
@@ -75,19 +82,12 @@ void ServerRuntime::stop() {
 }
 
 MetricsSnapshot ServerRuntime::metrics_snapshot() const {
-    return MetricsSnapshot{
-        .requests_total = metrics_.requests_total(),
-        .requests_errors = metrics_.requests_errors(),
-        .requests_cancelled_total = metrics_.requests_cancelled_total(),
-        .requests_queue_rejected_total = metrics_.requests_queue_rejected_total(),
-        .stream_disconnects_total = metrics_.stream_disconnects_total(),
-        .tool_invocations_total = metrics_.tool_invocations_total(),
-        .tool_failures_total = metrics_.tool_failures_total(),
-        .tool_timeouts_total = metrics_.tool_timeouts_total(),
-        .active_sessions = chat_service_->session_health().active,
-        .model_id = config_.model_id,
-        .uptime_seconds = metrics_.uptime_seconds(),
-    };
+    MetricsSnapshot snapshot;
+    metrics_.populate_snapshot(snapshot);
+    snapshot.active_sessions = chat_service_->session_health().active;
+    snapshot.model_id = config_.model_id;
+    snapshot.uptime_seconds = metrics_.uptime_seconds();
+    return snapshot;
 }
 
 void ServerRuntime::run_session_reaper() {

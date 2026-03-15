@@ -73,7 +73,7 @@ std::future_status CompletionHandle::wait_for(std::chrono::milliseconds timeout)
     return source->wait_for(timeout);
 }
 
-RuntimeResult<CompletionResult> CompletionHandle::get() const {
+RuntimeResult<CompletionResult> CompletionHandle::get() {
     if (!source) {
         return std::unexpected(
             RuntimeError{RuntimeErrorCode::RuntimeFailure, "Completion handle is not ready"});

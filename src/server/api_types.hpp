@@ -160,7 +160,7 @@ struct CompletionHandle {
     std::shared_ptr<CompletionSource> source;
 
     [[nodiscard]] std::future_status wait_for(std::chrono::milliseconds timeout) const;
-    RuntimeResult<CompletionResult> get() const;
+    RuntimeResult<CompletionResult> get();
 };
 
 inline ApiError invalid_request_error(std::string message,

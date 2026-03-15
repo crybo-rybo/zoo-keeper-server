@@ -30,6 +30,8 @@ class DisconnectRegistry {
         callbacks_;
 };
 
+/// Registers API routes. Takes non-const ServerRuntime because API handlers need
+/// mutable access for metrics() and chat_service().
 void register_api_routes(drogon::HttpAppFramework& app,
                          const std::shared_ptr<ServerRuntime>& runtime,
                          const std::shared_ptr<DisconnectRegistry>& disconnect_registry);

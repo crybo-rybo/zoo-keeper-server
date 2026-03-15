@@ -94,6 +94,7 @@ add_library(zks_server_core
     src/server/config.cpp
     src/server/executor.cpp
     src/server/http_server.cpp
+    src/server/metrics.cpp
     src/server/runtime.cpp
     src/server/session_manager.cpp
     src/server/streaming.cpp

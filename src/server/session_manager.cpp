@@ -1,6 +1,7 @@
 #include "server/session_manager.hpp"
 
-#include <chrono>
+#include "server/internal_utils.hpp"
+
 #include <cstddef>
 #include <iostream>
 #include <utility>
@@ -9,26 +10,10 @@
 namespace zks::server {
 namespace {
 
-std::int64_t now_seconds() {
-    return std::chrono::duration_cast<std::chrono::seconds>(
-               std::chrono::system_clock::now().time_since_epoch())
-        .count();
-}
-
-std::string combine_system_prompts(const std::string& base_prompt,
-                                   const std::optional<std::string>& request_prompt) {
-    if (base_prompt.empty()) {
-        return request_prompt.value_or("");
-    }
-    if (!request_prompt.has_value() || request_prompt->empty()) {
-        return base_prompt;
-    }
-    return base_prompt + "\n\n" + *request_prompt;
-}
-
 std::vector<ChatMessage> make_initial_history(const std::string& base_prompt,
                                               const std::optional<std::string>& request_prompt) {
-    const std::string effective_prompt = combine_system_prompts(base_prompt, request_prompt);
+    const std::string effective_prompt =
+        combine_system_prompts(base_prompt, request_prompt.value_or(""));
     if (effective_prompt.empty()) {
         return {};
     }

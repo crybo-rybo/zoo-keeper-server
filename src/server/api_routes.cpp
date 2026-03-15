@@ -3,6 +3,7 @@
 #include "server/api_json.hpp"
 #include "server/auth.hpp"
 #include "server/completion_controller.hpp"
+#include "server/route_utils.hpp"
 #include "server/runtime.hpp"
 
 #include <memory>
@@ -13,19 +14,6 @@
 
 namespace zks::server {
 namespace {
-
-std::function<void(const drogon::HttpResponsePtr&)>
-with_metrics(std::shared_ptr<ServerRuntime> runtime,
-             std::function<void(const drogon::HttpResponsePtr&)> callback) {
-    return [runtime = std::move(runtime), callback = std::move(callback)](
-               const drogon::HttpResponsePtr& resp) {
-        runtime->metrics().increment_requests();
-        if (static_cast<int>(resp->getStatusCode()) >= 400) {
-            runtime->metrics().increment_errors();
-        }
-        callback(resp);
-    };
-}
 
 drogon::HttpResponsePtr make_no_content_response() {
     auto response = drogon::HttpResponse::newHttpResponse();
@@ -225,19 +213,8 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 with_metrics(runtime, std::move(callback))(make_error_response(*auth_err));
                 return;
             }
-            const auto snapshot = runtime->metrics_snapshot();
-            with_metrics(runtime, std::move(callback))(make_json_response(nlohmann::json{
-                {"requests_total", snapshot.requests_total},
-                {"requests_errors", snapshot.requests_errors},
-                {"requests_cancelled_total", snapshot.requests_cancelled_total},
-                {"requests_queue_rejected_total", snapshot.requests_queue_rejected_total},
-                {"stream_disconnects_total", snapshot.stream_disconnects_total},
-                {"tool_invocations_total", snapshot.tool_invocations_total},
-                {"tool_failures_total", snapshot.tool_failures_total},
-                {"tool_timeouts_total", snapshot.tool_timeouts_total},
-                {"active_sessions", snapshot.active_sessions},
-                {"model_id", snapshot.model_id},
-                {"uptime_seconds", snapshot.uptime_seconds}}));
+            with_metrics(runtime, std::move(callback))(
+                make_json_response(runtime->metrics_snapshot().to_json()));
         },
         {drogon::Get});
 }
