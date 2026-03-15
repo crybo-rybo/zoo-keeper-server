@@ -5,7 +5,7 @@ if(POLICY CMP0135)
     set(CMAKE_POLICY_DEFAULT_CMP0135 NEW)
 endif()
 
-project(zoo-keeper-server VERSION 0.0.1 LANGUAGES CXX)
+project(zoo-keeper-server VERSION 0.0.4 LANGUAGES CXX)
 
 configure_file(src/server/version.hpp.in
                ${CMAKE_CURRENT_BINARY_DIR}/src/server/version.hpp @ONLY)
