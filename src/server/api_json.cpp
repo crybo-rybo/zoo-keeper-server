@@ -1,5 +1,6 @@
 #include "server/api_json.hpp"
 
+#include <algorithm>
 #include <array>
 #include <string>
 
@@ -15,15 +16,7 @@ ApiResult<void> reject_unknown_keys(const nlohmann::json& json, const char* cont
     }
 
     for (auto it = json.begin(); it != json.end(); ++it) {
-        bool allowed = false;
-        for (const char* key : allowed_keys) {
-            if (it.key() == key) {
-                allowed = true;
-                break;
-            }
-        }
-
-        if (!allowed) {
+        if (std::find(allowed_keys.begin(), allowed_keys.end(), it.key()) == allowed_keys.end()) {
             return std::unexpected(
                 invalid_request_error("Unknown " + std::string(context) + " field: " + it.key(),
                                       context, "unknown_field"));
