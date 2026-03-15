@@ -392,7 +392,8 @@ int main() {
             timed_out.status = zoo::ToolInvocationStatus::ExecutionFailed;
             timed_out.error =
                 zoo::Error{zoo::ErrorCode::ToolExecutionFailed,
-                           "Tool command timed out after 10 ms"};
+                           "Tool command timed out after 10 ms",
+                           "timeout"};
             response.tool_invocations.push_back(std::move(timed_out));
 
             chat_service->set_response(std::move(response));

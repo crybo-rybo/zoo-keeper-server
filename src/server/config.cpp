@@ -189,9 +189,9 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
 
             for (size_t index = 0; index < it->size(); ++index) {
                 const auto& tool_json = (*it)[index];
-                static constexpr std::array<const char*, 7> kAllowedToolKeys = {
+                static constexpr std::array<const char*, 8> kAllowedToolKeys = {
                     "name", "description", "parameters", "command", "working_directory", "env",
-                    "timeout_ms"};
+                    "timeout_ms", "inherit_environment"};
                 if (auto unknown_keys =
                         reject_unknown_keys(tool_json, "tool config", kAllowedToolKeys);
                     !unknown_keys) {
@@ -253,6 +253,15 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
                         }
                         tool.env.emplace(env_value.key(), env_value.value().get<std::string>());
                     }
+                }
+                if (auto inherit_it = tool_json.find("inherit_environment");
+                    inherit_it != tool_json.end()) {
+                    if (!inherit_it->is_boolean()) {
+                        return std::unexpected(with_path_context(
+                            path, "tools[" + std::to_string(index) +
+                                      "].inherit_environment must be a boolean"));
+                    }
+                    tool.inherit_environment = inherit_it->get<bool>();
                 }
                 if (auto timeout_it = tool_json.find("timeout_ms");
                     timeout_it != tool_json.end()) {

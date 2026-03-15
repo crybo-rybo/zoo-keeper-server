@@ -24,6 +24,5 @@ using CommandToolRunResult = std::expected<nlohmann::json, CommandToolRunError>;
                                                     const nlohmann::json& arguments);
 [[nodiscard]] Result<ToolProvider>
 make_command_tool_provider(const std::vector<CommandToolConfig>& tools);
-[[nodiscard]] bool is_command_tool_timeout_error(std::string_view message) noexcept;
 
 } // namespace zks::server

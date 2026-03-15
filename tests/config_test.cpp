@@ -98,6 +98,7 @@ int main() {
       "additionalProperties": false
     },
     "command": ["/usr/bin/env"],
+    "inherit_environment": true,
     "timeout_ms": 1500,
     "env": {
       "ZKS_TEST_FLAG": "1"
@@ -223,9 +224,47 @@ int main() {
         if (cfg->tools.size() != 1 || cfg->tools[0].name != "env" ||
             cfg->tools[0].command.size() != 1 ||
             cfg->tools[0].command[0] != "/usr/bin/env" ||
+            !cfg->tools[0].inherit_environment ||
             cfg->tools[0].timeout_ms != 1500 ||
             cfg->tools[0].env.at("ZKS_TEST_FLAG") != "1") {
             std::cerr << "tools config parsed with unexpected values." << '\n';
+            cleanup();
+            return 1;
+        }
+    }
+
+    {
+        const auto tools_default_env_path = temp_dir / "tools_default_env.json";
+        if (!write_text_file(tools_default_env_path,
+                             R"json({
+  "model_id": "demo-model",
+  "tools": [{
+    "name": "env-default",
+    "description": "Print environment",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "command": ["/usr/bin/env"]
+  }],
+  "zoo": {
+    "model_path": "/tmp/demo.gguf"
+  }
+})json")) {
+            std::cerr << "Failed to write default env tool config fixture." << '\n';
+            cleanup();
+            return 1;
+        }
+
+        auto cfg = zks::server::load_config(tools_default_env_path);
+        if (!cfg) {
+            std::cerr << "default env tool config unexpectedly failed: " << cfg.error() << '\n';
+            cleanup();
+            return 1;
+        }
+        if (cfg->tools.size() != 1 || cfg->tools[0].inherit_environment) {
+            std::cerr << "inherit_environment should default to false." << '\n';
             cleanup();
             return 1;
         }

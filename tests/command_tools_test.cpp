@@ -1,5 +1,6 @@
 #include "server/command_tools.hpp"
 
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
@@ -89,7 +90,7 @@ int main(int argc, char** argv) {
             return fail("timeout tool unexpectedly succeeded.");
         }
         if (!result.error().timed_out ||
-            !zks::server::is_command_tool_timeout_error(result.error().message)) {
+            result.error().message.find("timed out") == std::string::npos) {
             return fail("timeout tool did not report a timeout correctly.");
         }
     }
@@ -116,6 +117,34 @@ int main(int argc, char** argv) {
         if (provider->metadata.size() != 1 || provider->metadata[0].name != "helper" ||
             provider->metadata[0].parameters_schema != tool.parameters_schema) {
             return fail("Tool provider metadata did not match the tool config.");
+        }
+    }
+
+    {
+        ::setenv("ZKS_PARENT_SECRET", "top-secret", 1);
+
+        auto tool = make_tool(helper_path, "env-report");
+        tool.timeout_ms = 500;
+        tool.env.emplace("ZKS_TOOL_FLAG", "present");
+
+        auto result = zks::server::run_command_tool(tool, nlohmann::json{{"value", "zoo"}});
+        if (!result) {
+            std::cerr << "env-report tool unexpectedly failed: " << result.error().message << '\n';
+            return 1;
+        }
+        if ((*result)["parent_secret"] != "<missing>" || (*result)["tool_flag"] != "present") {
+            return fail("Tool environment was not scrubbed by default.");
+        }
+
+        tool.inherit_environment = true;
+        result = zks::server::run_command_tool(tool, nlohmann::json{{"value", "zoo"}});
+        if (!result) {
+            std::cerr << "env-report inherited tool unexpectedly failed: "
+                      << result.error().message << '\n';
+            return 1;
+        }
+        if ((*result)["parent_secret"] != "top-secret" || (*result)["tool_flag"] != "present") {
+            return fail("Tool environment inheritance did not behave as expected.");
         }
     }
 

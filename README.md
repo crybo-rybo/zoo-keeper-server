@@ -107,8 +107,8 @@ Set `sessions.max_sessions` to `0` (the default) to disable sessions entirely.
 Set `tools` to an array of server-owned command tools to let the shared
 `zoo::Agent` call local executables during completion. Each tool declares a
 name, description, manual-schema `parameters` object, and a `command` argv
-array. The server sends tool arguments as JSON on stdin and expects one JSON
-object on stdout.
+array. The server resolves that executable at startup, sends tool arguments as
+JSON on stdin, and expects one JSON object on stdout.
 
 When `bind_address` is non-loopback and `api_key` is unset, the server emits a
 startup warning because that configuration should only be used on a trusted
@@ -191,6 +191,7 @@ Example tool declaration:
         "additionalProperties": false
       },
       "command": ["/absolute/path/to/tool-binary", "echo"],
+      "inherit_environment": false,
       "timeout_ms": 5000
     }
   ]
@@ -200,8 +201,10 @@ Example tool declaration:
 Tool rules:
 
 - `command` is executed as argv, not through a shell
+- the resolved executable path is pinned at startup and that same path is executed later
 - tool arguments arrive as JSON on stdin
 - stdout must be a single JSON object
+- tool subprocesses run with a scrubbed environment by default; set `inherit_environment` to `true` only when a tool genuinely needs parent environment variables
 - non-zero exit, invalid stdout, or timeout are reported as `tool_execution_failed`
 - the current implementation supports the upstream flat-object manual schema subset only
 

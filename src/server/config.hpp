@@ -21,6 +21,7 @@ struct CommandToolConfig {
     nlohmann::json parameters_schema;
     std::vector<std::string> command;
     std::optional<std::filesystem::path> working_directory;
+    bool inherit_environment = false;
     std::map<std::string, std::string, std::less<>> env;
     std::uint32_t timeout_ms = 30000;
 

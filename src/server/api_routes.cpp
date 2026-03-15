@@ -2,7 +2,6 @@
 
 #include "server/api_json.hpp"
 #include "server/auth.hpp"
-#include "server/command_tools.hpp"
 #include "server/runtime.hpp"
 #include "server/streaming.hpp"
 
@@ -273,7 +272,7 @@ void increment_tool_metrics(ServerMetrics& metrics, const zoo::Response& respons
 
         metrics.increment_tool_failures();
         if (invocation.error.has_value() &&
-            is_command_tool_timeout_error(invocation.error->message)) {
+            invocation.error->context == std::optional<std::string>{"timeout"}) {
             metrics.increment_tool_timeouts();
         }
     }

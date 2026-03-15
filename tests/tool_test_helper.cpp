@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -61,6 +62,17 @@ int main(int argc, char** argv) {
     if (mode == "large-stdout") {
         std::string payload(70 * 1024, 'x');
         std::cout << nlohmann::json{{"payload", payload}}.dump();
+        return 0;
+    }
+
+    if (mode == "env-report") {
+        const char* parent_secret = std::getenv("ZKS_PARENT_SECRET");
+        const char* tool_flag = std::getenv("ZKS_TOOL_FLAG");
+        std::cout << nlohmann::json{
+            {"parent_secret", parent_secret ? parent_secret : "<missing>"},
+            {"tool_flag", tool_flag ? tool_flag : "<missing>"},
+        }
+                         .dump();
         return 0;
     }
 
