@@ -60,7 +60,7 @@ class ZooChatService final : public ChatService {
 
     ZooChatService(std::string model_id, std::string request_system_prompt,
                    std::vector<ToolDefinition> tool_metadata,
-                   std::unique_ptr<zoo::Agent> shared_agent,
+                   std::shared_ptr<zoo::Agent> shared_agent,
                    std::unique_ptr<SessionManager> session_manager);
     ~ZooChatService() override;
 
@@ -87,7 +87,7 @@ class ZooChatService final : public ChatService {
     std::string model_id_;
     std::string request_system_prompt_;
     std::vector<ToolDefinition> tool_metadata_;
-    std::unique_ptr<zoo::Agent> agent_;
+    std::shared_ptr<zoo::Agent> agent_;
     std::unique_ptr<SessionManager> session_manager_;
     std::atomic<std::uint64_t> next_completion_id_{1};
 };

@@ -3,6 +3,7 @@
 #include "server/api_types.hpp"
 #include "server/config.hpp"
 
+#include <cstddef>
 #include <optional>
 #include <string>
 
@@ -23,8 +24,19 @@ namespace zks::server {
     // and compare the suffix against the configured key in-place.
     constexpr std::string_view kBearerPrefix = "Bearer ";
     if (auth_header.size() != kBearerPrefix.size() + config.api_key->size() ||
-        auth_header.compare(0, kBearerPrefix.size(), kBearerPrefix.data(), kBearerPrefix.size()) != 0 ||
-        auth_header.compare(kBearerPrefix.size(), std::string::npos, *config.api_key) != 0) {
+        auth_header.compare(0, kBearerPrefix.size(), kBearerPrefix.data(), kBearerPrefix.size()) != 0) {
+        return auth_error("Invalid API key", "invalid_api_key");
+    }
+
+    // Constant-time comparison of the key portion to prevent timing side-channel attacks.
+    const auto* key_start = auth_header.data() + kBearerPrefix.size();
+    const auto& expected = *config.api_key;
+    volatile unsigned char diff = 0;
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        diff |= static_cast<unsigned char>(key_start[i]) ^
+                static_cast<unsigned char>(expected[i]);
+    }
+    if (diff != 0) {
         return auth_error("Invalid API key", "invalid_api_key");
     }
 
