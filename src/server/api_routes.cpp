@@ -32,7 +32,8 @@ DisconnectRegistry::track(const trantor::TcpConnectionPtr& connection,
     return callback_id;
 }
 
-void DisconnectRegistry::clear(const trantor::TcpConnectionPtr& connection, CallbackId callback_id) {
+void DisconnectRegistry::clear(const trantor::TcpConnectionPtr& connection,
+                               CallbackId callback_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = callbacks_.find(connection);
     if (it == callbacks_.end()) {
@@ -76,6 +77,20 @@ void register_api_routes(drogon::HttpAppFramework& app,
                          const std::shared_ptr<ServerRuntime>& runtime,
                          const std::shared_ptr<DisconnectRegistry>& disconnect_registry) {
     std::weak_ptr<ServerRuntime> weak_runtime = runtime;
+
+    if (!runtime->config().http.cors_allow_origins.empty()) {
+        app.registerHandler(
+            "/{path}",
+            [](const drogon::HttpRequestPtr&,
+               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string&) {
+                auto response = make_no_content_response();
+                response->addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+                response->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+                response->addHeader("Access-Control-Max-Age", "86400");
+                callback(response);
+            },
+            {drogon::Options});
+    }
     app.registerHandler(
         "/v1/models",
         [weak_runtime](const drogon::HttpRequestPtr& request,
@@ -109,8 +124,8 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 with_metrics(runtime, std::move(callback))(make_error_response(*auth_err));
                 return;
             }
-            with_metrics(runtime, std::move(callback))(
-                make_tools_response(runtime->chat_service().tools()));
+            with_metrics(runtime,
+                         std::move(callback))(make_tools_response(runtime->chat_service().tools()));
         },
         {drogon::Get});
 

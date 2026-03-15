@@ -1,0 +1,4 @@
+#pragma once
+namespace zks {
+inline constexpr const char* kVersion = "@PROJECT_VERSION@";
+} // namespace zks

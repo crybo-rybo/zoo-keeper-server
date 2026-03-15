@@ -32,10 +32,20 @@ struct TransparentStringEqual {
 
 namespace zks::server {
 
+/// Manages per-session conversation history with TTL-based expiration.
+///
+/// When `max_sessions = 0` all session operations return an error immediately.
+/// Thread-safe; all public methods acquire the internal mutex.
+///
+/// `reap_expired_sessions()` is called periodically by the background reaper
+/// thread in `ServerRuntime`.
 class SessionManager {
   public:
+    /// Callback that starts a completion and returns a handle to the async result.
     using CompletionStarter =
         std::function<CompletionHandle(std::vector<ChatMessage>, std::optional<TokenCallback>)>;
+
+    /// Callback to cancel an in-flight request by its completion ID.
     using RequestCanceler = std::function<void(std::uint64_t)>;
 
     SessionManager(std::string model_id, SessionConfig config, std::string base_system_prompt,
@@ -44,15 +54,17 @@ class SessionManager {
 
     [[nodiscard]] SessionHealth health() const noexcept;
 
+    /// Removes all sessions whose TTL has elapsed. Called by the background reaper thread.
     void reap_expired_sessions();
 
     ApiResult<SessionSummary> create_session(const SessionCreateRequest& request);
     ApiResult<SessionSummary> get_session(std::string_view session_id);
     ApiResult<void> delete_session(std::string_view session_id);
 
-    ApiResult<PendingChatCompletion> start_completion(
-        const ChatCompletionRequest& request, std::atomic<std::uint64_t>& next_completion_id,
-        std::optional<std::function<void(std::string_view)>> callback = std::nullopt);
+    ApiResult<PendingChatCompletion>
+    start_completion(const ChatCompletionRequest& request,
+                     std::atomic<std::uint64_t>& next_completion_id,
+                     std::optional<std::function<void(std::string_view)>> callback = std::nullopt);
 
     void stop();
 
@@ -95,8 +107,8 @@ class SessionManager {
     RequestCanceler request_canceler_;
     std::atomic<std::uint64_t> next_session_id_{1};
     mutable std::mutex mutex_;
-    std::unordered_map<std::string, std::shared_ptr<SessionState>,
-                       TransparentStringHash, TransparentStringEqual>
+    std::unordered_map<std::string, std::shared_ptr<SessionState>, TransparentStringHash,
+                       TransparentStringEqual>
         sessions_;
     bool stopping_ = false;
 };

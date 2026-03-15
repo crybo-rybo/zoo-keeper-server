@@ -5,8 +5,8 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <future>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -39,8 +39,7 @@ class TestCompletionSource final : public zks::server::CompletionSource {
         std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future)
         : future_(std::move(future)) {}
 
-    [[nodiscard]] std::future_status
-    wait_for(std::chrono::milliseconds timeout) const override {
+    [[nodiscard]] std::future_status wait_for(std::chrono::milliseconds timeout) const override {
         std::lock_guard<std::mutex> lock(mutex_);
         if (consumed_) {
             return std::future_status::ready;
@@ -66,8 +65,9 @@ class TestCompletionSource final : public zks::server::CompletionSource {
     bool consumed_ = false;
 };
 
-inline zks::server::CompletionHandle make_handle(
-    std::uint64_t id, std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future) {
+inline zks::server::CompletionHandle
+make_handle(std::uint64_t id,
+            std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future) {
     return zks::server::CompletionHandle{
         id,
         std::make_shared<TestCompletionSource>(std::move(future)),
@@ -114,9 +114,16 @@ class FakeChatService final : public zks::server::ChatService {
         return {};
     }
 
-    zks::server::ApiResult<zks::server::PendingChatCompletion> start_completion(
-        const zks::server::ChatCompletionRequest&,
-        std::optional<zks::server::TokenCallback> callback = std::nullopt) override {
+    ~FakeChatService() {
+        finish_latch_->signal();
+        if (streaming_thread_.joinable()) {
+            streaming_thread_.join();
+        }
+    }
+
+    zks::server::ApiResult<zks::server::PendingChatCompletion>
+    start_completion(const zks::server::ChatCompletionRequest&,
+                     std::optional<zks::server::TokenCallback> callback = std::nullopt) override {
 
         const auto mode = mode_.load(std::memory_order_acquire);
 
@@ -168,8 +175,8 @@ class FakeChatService final : public zks::server::ChatService {
             std::promise<zks::server::RuntimeResult<zks::server::CompletionResult>> promise;
             auto future = promise.get_future();
 
-            std::thread([cb = std::move(callback), latch = std::move(latch),
-                         promise = std::move(promise)]() mutable {
+            streaming_thread_ = std::thread([cb = std::move(callback), latch = std::move(latch),
+                                             promise = std::move(promise)]() mutable {
                 if (cb.has_value()) {
                     (*cb)("hello ");
                     (*cb)("world");
@@ -180,7 +187,7 @@ class FakeChatService final : public zks::server::ChatService {
                 zks::server::CompletionResult response;
                 response.text = "hello world";
                 promise.set_value(std::move(response));
-            }).detach();
+            });
 
             zks::server::PendingChatCompletion pending;
             pending.id = "fake-stream-1";
@@ -199,8 +206,7 @@ class FakeChatService final : public zks::server::ChatService {
         return std::unexpected(zks::server::server_error("not implemented in fake"));
     }
 
-    zks::server::ApiResult<zks::server::SessionSummary>
-    get_session(std::string_view) override {
+    zks::server::ApiResult<zks::server::SessionSummary> get_session(std::string_view) override {
         return std::unexpected(zks::server::server_error("not implemented in fake"));
     }
 
@@ -250,4 +256,5 @@ class FakeChatService final : public zks::server::ChatService {
     std::atomic<bool> ready_{true};
     std::atomic<FakeCompletionMode> mode_{FakeCompletionMode::ServerError};
     std::shared_ptr<Latch> finish_latch_ = std::make_shared<Latch>();
+    std::thread streaming_thread_;
 };

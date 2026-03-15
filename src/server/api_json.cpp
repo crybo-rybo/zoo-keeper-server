@@ -40,8 +40,8 @@ ApiResult<MessageRole> parse_role(std::string_view role) {
         return MessageRole::Tool;
     }
 
-    return std::unexpected(
-        invalid_request_error("Unsupported message role: " + std::string(role), "messages", "invalid_role"));
+    return std::unexpected(invalid_request_error("Unsupported message role: " + std::string(role),
+                                                 "messages", "invalid_role"));
 }
 
 ApiResult<ChatMessage> parse_message(const nlohmann::json& json, std::vector<ChatMessage>& seed) {
@@ -103,9 +103,7 @@ nlohmann::json make_tool_schema(const ToolDefinition& metadata) {
 }
 
 nlohmann::json make_tool_invocation_json(const ToolInvocationRecord& inv) {
-    nlohmann::json j{{"id", inv.id},
-                     {"name", inv.name},
-                     {"status", to_string(inv.status)}};
+    nlohmann::json j{{"id", inv.id}, {"name", inv.name}, {"status", to_string(inv.status)}};
     try {
         j["arguments"] = nlohmann::json::parse(inv.arguments_json);
     } catch (...) {
@@ -132,24 +130,24 @@ nlohmann::json make_chat_completion_body(std::string_view completion_id, std::in
         tool_invocations.push_back(make_tool_invocation_json(inv));
     }
 
-    return nlohmann::json{{"id", completion_id},
-                          {"object", "chat.completion"},
-                          {"created", created},
-                          {"model", model_id},
-                          {"choices",
-                           {{{"index", 0},
-                             {"message", {{"role", "assistant"}, {"content", response.text}}},
-                             {"finish_reason", "stop"}}}},
-                          {"usage",
-                           {{"prompt_tokens", response.usage.prompt_tokens},
-                            {"completion_tokens", response.usage.completion_tokens},
-                            {"total_tokens", response.usage.total_tokens}}},
-                          {"zoo_metrics",
-                           {{"latency_ms", response.metrics.latency_ms.count()},
-                            {"time_to_first_token_ms",
-                             response.metrics.time_to_first_token_ms.count()},
-                            {"tokens_per_second", response.metrics.tokens_per_second}}},
-                          {"tool_invocations", std::move(tool_invocations)}};
+    return nlohmann::json{
+        {"id", completion_id},
+        {"object", "chat.completion"},
+        {"created", created},
+        {"model", model_id},
+        {"choices",
+         {{{"index", 0},
+           {"message", {{"role", "assistant"}, {"content", response.text}}},
+           {"finish_reason", "stop"}}}},
+        {"usage",
+         {{"prompt_tokens", response.usage.prompt_tokens},
+          {"completion_tokens", response.usage.completion_tokens},
+          {"total_tokens", response.usage.total_tokens}}},
+        {"zoo_metrics",
+         {{"latency_ms", response.metrics.latency_ms.count()},
+          {"time_to_first_token_ms", response.metrics.time_to_first_token_ms.count()},
+          {"tokens_per_second", response.metrics.tokens_per_second}}},
+        {"tool_invocations", std::move(tool_invocations)}};
 }
 
 nlohmann::json make_session_body(const SessionSummary& summary) {

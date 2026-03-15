@@ -12,6 +12,10 @@
 
 namespace zks::server {
 
+/// Fixed-size thread pool with a bounded task queue.
+///
+/// Submitting a task when the queue is full returns `std::unexpected` immediately
+/// rather than blocking or growing the queue. All public methods are thread-safe.
 class BoundedExecutor {
   public:
     BoundedExecutor(size_t worker_count, size_t max_pending_tasks);
@@ -20,6 +24,7 @@ class BoundedExecutor {
     BoundedExecutor(const BoundedExecutor&) = delete;
     BoundedExecutor& operator=(const BoundedExecutor&) = delete;
 
+    /// Enqueues a task for execution. Returns `std::unexpected` if the queue is full.
     [[nodiscard]] Result<void> submit(std::function<void()> task);
     void stop();
 

@@ -27,8 +27,7 @@ std::optional<int64_t> read_metric(const drogon::HttpClientPtr& client, const ch
     req->setMethod(drogon::Get);
     req->addHeader("Authorization", "Bearer test-secret");
     auto [status, resp] = client->sendRequest(req, 5.0);
-    if (status != drogon::ReqResult::Ok || !resp ||
-        resp->getStatusCode() != drogon::k200OK) {
+    if (status != drogon::ReqResult::Ok || !resp || resp->getStatusCode() != drogon::k200OK) {
         return std::nullopt;
     }
     auto json = nlohmann::json::parse(std::string(resp->body()), nullptr, false);
@@ -65,11 +64,13 @@ class HttpIntegrationTest : public ::testing::Test {
         config.zoo_config.model_path = "/tmp/integration-test.gguf";
         config.http.client_max_body_size_bytes = 512;
 
-        g_state->runtime = zks::server::ServerRuntime::create_for_test(config, g_state->chat_service);
+        g_state->runtime =
+            zks::server::ServerRuntime::create_for_test(config, g_state->chat_service);
         g_state->disconnect_registry = std::make_shared<zks::server::DisconnectRegistry>();
 
         zks::server::register_health_routes(drogon::app(), g_state->runtime);
-        zks::server::register_api_routes(drogon::app(), g_state->runtime, g_state->disconnect_registry);
+        zks::server::register_api_routes(drogon::app(), g_state->runtime,
+                                         g_state->disconnect_registry);
 
         std::mutex startup_mutex;
         std::condition_variable startup_cv;
@@ -85,8 +86,7 @@ class HttpIntegrationTest : public ::testing::Test {
         g_state->server_thread = std::thread([&config, disconnect_registry] {
             drogon::app()
                 .addListener("127.0.0.1", 0)
-                .setClientMaxBodySize(
-                    static_cast<size_t>(config.http.client_max_body_size_bytes))
+                .setClientMaxBodySize(static_cast<size_t>(config.http.client_max_body_size_bytes))
                 .setClientMaxMemoryBodySize(
                     static_cast<size_t>(config.http.client_max_memory_body_size_bytes))
                 .setConnectionCallback(
@@ -108,8 +108,8 @@ class HttpIntegrationTest : public ::testing::Test {
         ASSERT_FALSE(listeners.empty());
         uint16_t port = listeners[0].toPort();
 
-        g_state->client = drogon::HttpClient::newHttpClient("127.0.0.1", port, false,
-                                                             drogon::app().getLoop());
+        g_state->client =
+            drogon::HttpClient::newHttpClient("127.0.0.1", port, false, drogon::app().getLoop());
         g_state->started = true;
     }
 
@@ -127,9 +127,15 @@ class HttpIntegrationTest : public ::testing::Test {
     }
 
   protected:
-    auto& chat_service() { return g_state->chat_service; }
-    auto& runtime() { return g_state->runtime; }
-    auto& client() { return g_state->client; }
+    auto& chat_service() {
+        return g_state->chat_service;
+    }
+    auto& runtime() {
+        return g_state->runtime;
+    }
+    auto& client() {
+        return g_state->client;
+    }
 };
 
 TEST_F(HttpIntegrationTest, HealthzReturns200) {
@@ -172,10 +178,9 @@ TEST_F(HttpIntegrationTest, ValidCompletionReturns500FromFake) {
     req->setMethod(drogon::Post);
     req->addHeader("Authorization", "Bearer test-secret");
     req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-    nlohmann::json body = {
-        {"model", "integration-test-model"},
-        {"messages", {{{"role", "user"}, {"content", "hi"}}}},
-        {"stream", false}};
+    nlohmann::json body = {{"model", "integration-test-model"},
+                           {"messages", {{{"role", "user"}, {"content", "hi"}}}},
+                           {"stream", false}};
     req->setBody(body.dump());
     auto [status, resp] = client()->sendRequest(req, 5.0);
     ASSERT_EQ(status, drogon::ReqResult::Ok);
@@ -418,4 +423,30 @@ TEST_F(HttpIntegrationTest, StreamingQueueFullReturns503) {
     EXPECT_EQ(resp->getStatusCode(), drogon::k503ServiceUnavailable);
 
     chat_service()->set_mode(FakeCompletionMode::ServerError);
+}
+
+TEST_F(HttpIntegrationTest, CorsHeadersAbsentWhenUnconfigured) {
+    // The test server has no cors_allow_origins configured; no CORS headers should appear.
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/healthz");
+    req->setMethod(drogon::Get);
+    req->addHeader("Origin", "http://localhost:3000");
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_TRUE(resp->getHeader("Access-Control-Allow-Origin").empty());
+}
+
+TEST_F(HttpIntegrationTest, HealthzResponseIncludesVersion) {
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/healthz");
+    req->setMethod(drogon::Get);
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+
+    auto json = nlohmann::json::parse(std::string(resp->body()), nullptr, false);
+    ASSERT_FALSE(json.is_discarded());
+    EXPECT_TRUE(json.contains("version"));
+    EXPECT_FALSE(json.at("version").get<std::string>().empty());
 }

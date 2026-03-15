@@ -8,14 +8,16 @@
 #include <vector>
 
 TEST(ZooAdapterTest, RoleRoundTrip) {
-    EXPECT_EQ(zks::server::from_zoo_role(zks::server::to_zoo_role(
-        zks::server::MessageRole::System)), zks::server::MessageRole::System);
-    EXPECT_EQ(zks::server::from_zoo_role(zks::server::to_zoo_role(
-        zks::server::MessageRole::User)), zks::server::MessageRole::User);
-    EXPECT_EQ(zks::server::from_zoo_role(zks::server::to_zoo_role(
-        zks::server::MessageRole::Assistant)), zks::server::MessageRole::Assistant);
-    EXPECT_EQ(zks::server::from_zoo_role(zks::server::to_zoo_role(
-        zks::server::MessageRole::Tool)), zks::server::MessageRole::Tool);
+    EXPECT_EQ(
+        zks::server::from_zoo_role(zks::server::to_zoo_role(zks::server::MessageRole::System)),
+        zks::server::MessageRole::System);
+    EXPECT_EQ(zks::server::from_zoo_role(zks::server::to_zoo_role(zks::server::MessageRole::User)),
+              zks::server::MessageRole::User);
+    EXPECT_EQ(
+        zks::server::from_zoo_role(zks::server::to_zoo_role(zks::server::MessageRole::Assistant)),
+        zks::server::MessageRole::Assistant);
+    EXPECT_EQ(zks::server::from_zoo_role(zks::server::to_zoo_role(zks::server::MessageRole::Tool)),
+              zks::server::MessageRole::Tool);
 }
 
 TEST(ZooAdapterTest, SystemMessageRoundTrip) {
@@ -93,7 +95,7 @@ TEST(ZooAdapterTest, ErrorCodeRoundTrip) {
 
     // RuntimeFailure -> zoo::Unknown -> RuntimeFailure
     EXPECT_EQ(zks::server::from_zoo_error_code(
-        zks::server::to_zoo_error_code(zks::server::RuntimeErrorCode::RuntimeFailure)),
+                  zks::server::to_zoo_error_code(zks::server::RuntimeErrorCode::RuntimeFailure)),
               zks::server::RuntimeErrorCode::RuntimeFailure);
 }
 
@@ -124,10 +126,12 @@ TEST(ZooAdapterTest, ErrorStructWithoutContext) {
 TEST(ZooAdapterTest, ToolInvocationStatusRoundTrip) {
     EXPECT_EQ(zks::server::from_zoo_tool_invocation_status(zoo::ToolInvocationStatus::Succeeded),
               zks::server::ToolInvocationStatus::Succeeded);
-    EXPECT_EQ(zks::server::from_zoo_tool_invocation_status(zoo::ToolInvocationStatus::ValidationFailed),
-              zks::server::ToolInvocationStatus::ValidationFailed);
-    EXPECT_EQ(zks::server::from_zoo_tool_invocation_status(zoo::ToolInvocationStatus::ExecutionFailed),
-              zks::server::ToolInvocationStatus::ExecutionFailed);
+    EXPECT_EQ(
+        zks::server::from_zoo_tool_invocation_status(zoo::ToolInvocationStatus::ValidationFailed),
+        zks::server::ToolInvocationStatus::ValidationFailed);
+    EXPECT_EQ(
+        zks::server::from_zoo_tool_invocation_status(zoo::ToolInvocationStatus::ExecutionFailed),
+        zks::server::ToolInvocationStatus::ExecutionFailed);
 }
 
 TEST(ZooAdapterTest, ToolMetadataConversion) {

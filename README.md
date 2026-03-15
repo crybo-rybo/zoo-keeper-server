@@ -63,11 +63,6 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-## Release Docs
-
-- [Roadmap](docs/v0.0.1-roadmap.md)
-- [Release Notes](docs/v0.0.1-release-notes.md)
-
 ## Run
 
 ```bash
@@ -115,6 +110,18 @@ startup warning because that configuration should only be used on a trusted
 network.
 
 The `zoo` object is passed directly to `zoo::Config`. See [zoo-keeper](https://github.com/crybo-rybo/zoo-keeper) for the full set of options including sampling parameters.
+
+## Configuration Examples
+
+The `config/` directory contains ready-to-use templates:
+
+| File | Purpose |
+|------|---------|
+| `server.example.json` | Full-featured template; starting point for new deployments |
+| `api-key-enabled.json` | Same as above but with `api_key` set; use when binding to non-loopback |
+| `cpu-only.json` | `n_gpu_layers: 0`, sessions disabled; for machines without GPU |
+| `metal.json` | `context_size: 4096`, `n_gpu_layers: -1`; macOS Metal GPU tuning baseline |
+| `sessions-disabled.json` | `max_sessions: 0`; stateless deployment |
 
 ## API
 
@@ -271,7 +278,7 @@ One `zoo::Agent` is loaded at startup and shared across all requests. Sessions d
 
 - **Sessions are in-memory and process-lifetime only.** There is no persistence; sessions are lost on restart.
 - **macOS + Metal + sessions: OOM during inference will abort the process.**
-  On macOS with Metal enabled, a device out-of-memory condition during inference triggers a fatal abort in the upstream `llama.cpp` Metal backend before `zoo-keeper` can surface a recoverable error. Reduce `n_gpu_layers` or `context_size`, or disable sessions (`max_sessions = 0`) if you hit this. Tracked upstream; see `docs/zoo-keeper-metal-oom-issue.md` for details.
+  On macOS with Metal enabled, a device out-of-memory condition during inference triggers a fatal abort in the upstream `llama.cpp` Metal backend before `zoo-keeper` can surface a recoverable error. Reduce `n_gpu_layers` or `context_size`, or disable sessions (`max_sessions = 0`) if you hit this. Tracked upstream.
 
 ## License
 

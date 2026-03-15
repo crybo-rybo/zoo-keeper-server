@@ -1,10 +1,17 @@
 #include "server/config.hpp"
 #include "server/http_server.hpp"
 #include "server/runtime.hpp"
+#include "server/version.hpp"
 
 #include <iostream>
+#include <string_view>
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--version") {
+        std::cout << "zoo-keeper-server " << zks::kVersion << '\n';
+        return 0;
+    }
+
     if (argc != 2) {
         std::cerr << "Usage: zoo_keeper_server <config.json>" << '\n';
         return 1;
@@ -26,13 +33,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    zks::server::HttpServer server(*runtime_result,
-                                   zks::server::HttpServerOptions{
+    zks::server::HttpServer server(*runtime_result, zks::server::HttpServerOptions{
 #ifdef ZKS_ENABLE_TEST_UI
-                                       .enable_test_ui = true,
+                                                        .enable_test_ui = true,
 #else
-                                       .enable_test_ui = false,
+                                                        .enable_test_ui = false,
 #endif
-                                   });
+                                                    });
     return server.run();
 }

@@ -40,9 +40,10 @@ struct SessionConfig {
 };
 
 struct HttpConfig {
-    int64_t client_max_body_size_bytes = 1048576;        // 1 MiB
-    int64_t client_max_memory_body_size_bytes = 65536;   // 64 KiB
+    int64_t client_max_body_size_bytes = 1048576;      // 1 MiB
+    int64_t client_max_memory_body_size_bytes = 65536; // 64 KiB
     int32_t idle_connection_timeout_seconds = 60;
+    std::vector<std::string> cors_allow_origins; // empty = CORS disabled
 
     [[nodiscard]] Result<void> validate() const;
 };

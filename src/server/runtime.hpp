@@ -5,6 +5,7 @@
 #include "server/executor.hpp"
 #include "server/metrics.hpp"
 #include "server/result.hpp"
+#include "server/version.hpp"
 
 #include <condition_variable>
 #include <functional>
@@ -15,19 +16,26 @@
 
 namespace zks::server {
 
+/// Point-in-time health snapshot returned by `/healthz`.
 struct HealthSnapshot {
     bool ready = false;
     std::string model_id;
     SessionHealth sessions;
+    std::string version = kVersion;
 };
 
+/// Singleton lifecycle owner for the server process.
+///
+/// Owns the `ChatService`, background continuation executor, and session reaper thread.
+/// Private constructor — use `create()` or `create_for_test()`.
+/// `stop()` is idempotent; it may safely be called multiple times.
 class ServerRuntime {
   public:
     static Result<std::shared_ptr<ServerRuntime>> create(ServerConfig config);
 
     /// Creates a ServerRuntime for tests, bypassing model loading and tool validation.
-    static std::shared_ptr<ServerRuntime> create_for_test(
-        ServerConfig config, std::shared_ptr<ChatService> chat_service);
+    static std::shared_ptr<ServerRuntime>
+    create_for_test(ServerConfig config, std::shared_ptr<ChatService> chat_service);
 
     ~ServerRuntime();
 
@@ -39,8 +47,10 @@ class ServerRuntime {
         return static_cast<bool>(chat_service_) && chat_service_->is_ready();
     }
 
+    /// Returns a const, lock-free snapshot of the current health state.
     [[nodiscard]] HealthSnapshot health_snapshot() const {
-        return HealthSnapshot{is_ready(), config_.model_id, chat_service_->session_health()};
+        return HealthSnapshot{is_ready(), config_.model_id, chat_service_->session_health(),
+                              kVersion};
     }
 
     [[nodiscard]] ChatService& chat_service() noexcept {
@@ -57,6 +67,7 @@ class ServerRuntime {
 
     [[nodiscard]] MetricsSnapshot metrics_snapshot() const;
 
+    /// Signals all background threads to stop and joins them. Safe to call multiple times.
     void stop();
 
     template <typename Func> Result<void> submit_background(Func&& task) {

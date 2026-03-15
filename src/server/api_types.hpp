@@ -150,16 +150,17 @@ class CompletionSource {
   public:
     virtual ~CompletionSource() = default;
 
-    [[nodiscard]] virtual std::future_status
-    wait_for(std::chrono::milliseconds timeout) const = 0;
+    [[nodiscard]] virtual std::future_status wait_for(std::chrono::milliseconds timeout) const = 0;
     virtual RuntimeResult<CompletionResult> get() = 0;
 };
 
+/// Lightweight handle to an in-flight or completed async completion.
 struct CompletionHandle {
     std::uint64_t id = 0;
     std::shared_ptr<CompletionSource> source;
 
     [[nodiscard]] std::future_status wait_for(std::chrono::milliseconds timeout) const;
+    /// Consumes the result from the underlying source. May only be called once.
     RuntimeResult<CompletionResult> get();
 };
 
@@ -180,11 +181,13 @@ inline ApiError server_error(std::string message, std::optional<std::string> cod
     return ApiError{500, std::move(message), "server_error", std::nullopt, std::move(code)};
 }
 
-inline ApiError not_found_error(std::string message, std::optional<std::string> code = std::nullopt) {
+inline ApiError not_found_error(std::string message,
+                                std::optional<std::string> code = std::nullopt) {
     return ApiError{404, std::move(message), "not_found_error", std::nullopt, std::move(code)};
 }
 
-inline ApiError conflict_error(std::string message, std::optional<std::string> code = std::nullopt) {
+inline ApiError conflict_error(std::string message,
+                               std::optional<std::string> code = std::nullopt) {
     return ApiError{409, std::move(message), "conflict_error", std::nullopt, std::move(code)};
 }
 
@@ -219,6 +222,8 @@ struct SessionHealth {
     std::uint32_t idle_ttl_seconds = 0;
 };
 
+/// RAII guard that invokes a cleanup callback exactly once, either on destruction or
+/// when `release()` is called explicitly, whichever comes first.
 class CompletionLease {
   public:
     explicit CompletionLease(std::function<void()> on_release = {})

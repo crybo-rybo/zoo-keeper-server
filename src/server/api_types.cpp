@@ -47,8 +47,7 @@ Result<void> validate_message_sequence(const std::vector<ChatMessage>& history,
 
     const MessageRole last_role = history.back().role;
     if (next_role == last_role && next_role != MessageRole::Tool) {
-        return std::unexpected(
-            "Cannot have consecutive messages with the same role (except Tool)");
+        return std::unexpected("Cannot have consecutive messages with the same role (except Tool)");
     }
 
     return {};

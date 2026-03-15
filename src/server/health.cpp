@@ -14,11 +14,11 @@ drogon::HttpResponsePtr make_health_response(const HealthSnapshot& snapshot) {
           {"active", snapshot.sessions.active},
           {"max_sessions", snapshot.sessions.max_sessions},
           {"idle_ttl_seconds", snapshot.sessions.idle_ttl_seconds}}},
+        {"version", snapshot.version},
     };
 
     auto response = drogon::HttpResponse::newHttpResponse();
-    response->setStatusCode(snapshot.ready ? drogon::k200OK
-                                           : drogon::k503ServiceUnavailable);
+    response->setStatusCode(snapshot.ready ? drogon::k200OK : drogon::k503ServiceUnavailable);
     response->setContentTypeCodeAndCustomString(drogon::CT_APPLICATION_JSON, "application/json");
     response->setBody(body.dump());
     return response;

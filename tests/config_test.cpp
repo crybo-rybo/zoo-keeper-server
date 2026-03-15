@@ -12,8 +12,8 @@ namespace {
 
 std::filesystem::path make_temp_dir() {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    auto path = std::filesystem::temp_directory_path() /
-                ("zks-config-test-" + std::to_string(stamp));
+    auto path =
+        std::filesystem::temp_directory_path() / ("zks-config-test-" + std::to_string(stamp));
     std::filesystem::create_directories(path);
     return path;
 }
@@ -30,7 +30,9 @@ bool write_text_file(const std::filesystem::path& path, const std::string& conte
 struct TempDir {
     std::filesystem::path path;
     TempDir() : path(make_temp_dir()) {}
-    ~TempDir() { std::filesystem::remove_all(path); }
+    ~TempDir() {
+        std::filesystem::remove_all(path);
+    }
 };
 
 } // namespace
@@ -39,7 +41,7 @@ TEST(ConfigTest, ValidConfigParsesCorrectly) {
     TempDir tmp;
     auto file = tmp.path / "valid.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "bind_address": "127.0.0.1",
   "port": 8081,
   "model_id": "demo-model",
@@ -68,7 +70,7 @@ TEST(ConfigTest, UnknownKeyRejected) {
     TempDir tmp;
     auto file = tmp.path / "invalid.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "zoo": { "model_path": "/tmp/demo.gguf" },
   "extra_key": true
@@ -83,7 +85,7 @@ TEST(ConfigTest, EmptyApiKeyRejected) {
     TempDir tmp;
     auto file = tmp.path / "empty_api_key.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "api_key": "",
   "zoo": { "model_path": "/tmp/demo.gguf" }
@@ -98,7 +100,7 @@ TEST(ConfigTest, HttpDefaultsWhenSectionOmitted) {
     TempDir tmp;
     auto file = tmp.path / "no_http.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "zoo": { "model_path": "/tmp/demo.gguf" }
 })json"));
@@ -114,7 +116,7 @@ TEST(ConfigTest, ToolsConfigParsesCorrectly) {
     TempDir tmp;
     auto file = tmp.path / "tools.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "tools": [{
     "name": "env",
@@ -148,7 +150,7 @@ TEST(ConfigTest, InheritEnvironmentDefaultsFalse) {
     TempDir tmp;
     auto file = tmp.path / "default_env.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "tools": [{
     "name": "env-default",
@@ -169,7 +171,7 @@ TEST(ConfigTest, MissingToolExecutableRejectedAtProviderCreation) {
     TempDir tmp;
     auto file = tmp.path / "missing_tool.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "tools": [{
     "name": "missing",
@@ -191,7 +193,7 @@ TEST(ConfigTest, BadToolSchemaRejected) {
     TempDir tmp;
     auto file = tmp.path / "bad_schema.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "tools": [{
     "name": "bad-schema",
@@ -214,7 +216,7 @@ TEST(ConfigTest, ExplicitHttpOverrides) {
     TempDir tmp;
     auto file = tmp.path / "http_override.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "http": {
     "client_max_body_size_bytes": 2097152,
@@ -235,7 +237,7 @@ TEST(ConfigTest, UnknownHttpKeyRejected) {
     TempDir tmp;
     auto file = tmp.path / "unknown_http.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "http": { "bad_key": 42 },
   "zoo": { "model_path": "/tmp/demo.gguf" }
@@ -250,7 +252,7 @@ TEST(ConfigTest, NonPositiveBodySizeRejected) {
     TempDir tmp;
     auto file = tmp.path / "bad_body.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "http": { "client_max_body_size_bytes": 0 },
   "zoo": { "model_path": "/tmp/demo.gguf" }
@@ -265,7 +267,7 @@ TEST(ConfigTest, NonPositiveMemoryBodySizeRejected) {
     TempDir tmp;
     auto file = tmp.path / "bad_mem.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "http": { "client_max_memory_body_size_bytes": -1 },
   "zoo": { "model_path": "/tmp/demo.gguf" }
@@ -280,7 +282,7 @@ TEST(ConfigTest, IdleTimeoutZeroAccepted) {
     TempDir tmp;
     auto file = tmp.path / "timeout_zero.json";
     ASSERT_TRUE(write_text_file(file,
-        R"json({
+                                R"json({
   "model_id": "demo-model",
   "http": { "idle_connection_timeout_seconds": 0 },
   "zoo": { "model_path": "/tmp/demo.gguf" }

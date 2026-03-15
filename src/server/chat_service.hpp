@@ -30,6 +30,10 @@ struct ToolProvider {
     std::vector<RegisteredTool> tools;
 };
 
+/// Abstract interface for the chat completion service.
+///
+/// All methods are safe to call from Drogon I/O threads.
+/// One shared agent backs all requests; sessions are managed externally via SessionManager.
 class ChatService {
   public:
     virtual ~ChatService() = default;
@@ -39,9 +43,11 @@ class ChatService {
     [[nodiscard]] virtual const std::vector<ToolDefinition>& tools() const noexcept = 0;
     [[nodiscard]] virtual SessionHealth session_health() const noexcept = 0;
 
-    virtual ApiResult<PendingChatCompletion> start_completion(
-        const ChatCompletionRequest& request,
-        std::optional<TokenCallback> callback = std::nullopt) = 0;
+    /// Begins a chat completion. Returns `ApiError` with `queue_full` code when the
+    /// bounded continuation executor is saturated.
+    virtual ApiResult<PendingChatCompletion>
+    start_completion(const ChatCompletionRequest& request,
+                     std::optional<TokenCallback> callback = std::nullopt) = 0;
 
     virtual ApiResult<SessionSummary> create_session(const SessionCreateRequest& request) = 0;
     virtual ApiResult<SessionSummary> get_session(std::string_view session_id) = 0;
@@ -52,11 +58,15 @@ class ChatService {
     virtual void stop() = 0;
 };
 
+/// Concrete ChatService backed by a single shared `zoo::Agent`.
+///
+/// `create()` validates config and loads the model synchronously; it blocks until
+/// the model is in memory. All public methods are thread-safe.
 class ZooChatService final : public ChatService {
   public:
     static Result<std::shared_ptr<ZooChatService>> create(const ServerConfig& config);
     static Result<std::shared_ptr<ZooChatService>> create(const ServerConfig& config,
-                                                           ToolProvider tools);
+                                                          ToolProvider tools);
 
     ZooChatService(std::string model_id, std::string request_system_prompt,
                    std::vector<ToolDefinition> tool_metadata,
@@ -69,9 +79,9 @@ class ZooChatService final : public ChatService {
     [[nodiscard]] const std::vector<ToolDefinition>& tools() const noexcept override;
     [[nodiscard]] SessionHealth session_health() const noexcept override;
 
-    ApiResult<PendingChatCompletion> start_completion(
-        const ChatCompletionRequest& request,
-        std::optional<TokenCallback> callback = std::nullopt) override;
+    ApiResult<PendingChatCompletion>
+    start_completion(const ChatCompletionRequest& request,
+                     std::optional<TokenCallback> callback = std::nullopt) override;
 
     ApiResult<SessionSummary> create_session(const SessionCreateRequest& request) override;
     ApiResult<SessionSummary> get_session(std::string_view session_id) override;
@@ -82,7 +92,8 @@ class ZooChatService final : public ChatService {
     void stop() override;
 
   private:
-    [[nodiscard]] std::vector<ChatMessage> prepare_messages(const ChatCompletionRequest& request) const;
+    [[nodiscard]] std::vector<ChatMessage>
+    prepare_messages(const ChatCompletionRequest& request) const;
 
     std::string model_id_;
     std::string request_system_prompt_;
