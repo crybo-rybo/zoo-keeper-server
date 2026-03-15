@@ -1,10 +1,11 @@
 #include "server/command_tools.hpp"
 #include "server/config.hpp"
 
+#include <gtest/gtest.h>
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <string>
 
 namespace {
@@ -26,21 +27,19 @@ bool write_text_file(const std::filesystem::path& path, const std::string& conte
     return static_cast<bool>(output);
 }
 
+struct TempDir {
+    std::filesystem::path path;
+    TempDir() : path(make_temp_dir()) {}
+    ~TempDir() { std::filesystem::remove_all(path); }
+};
+
 } // namespace
 
-int main() {
-    const auto temp_dir = make_temp_dir();
-    const auto cleanup = [&temp_dir]() { std::filesystem::remove_all(temp_dir); };
-
-    const auto valid_path = temp_dir / "valid.json";
-    const auto invalid_path = temp_dir / "invalid.json";
-    const auto empty_api_key_path = temp_dir / "empty_api_key.json";
-    const auto tools_path = temp_dir / "tools.json";
-    const auto missing_tool_path = temp_dir / "missing_tool.json";
-    const auto bad_tool_schema_path = temp_dir / "bad_tool_schema.json";
-
-    if (!write_text_file(valid_path,
-                         R"json({
+TEST(ConfigTest, ValidConfigParsesCorrectly) {
+    TempDir tmp;
+    auto file = tmp.path / "valid.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
   "bind_address": "127.0.0.1",
   "port": 8081,
   "model_id": "demo-model",
@@ -52,453 +51,273 @@ int main() {
     "model_path": "/tmp/demo.gguf",
     "max_tokens": 32
   }
-})json")) {
-        std::cerr << "Failed to write valid config fixture." << '\n';
-        cleanup();
-        return 1;
-    }
+})json"));
 
-    if (!write_text_file(invalid_path,
-                         R"json({
+    auto config = zks::server::load_config(file);
+    ASSERT_TRUE(config.has_value());
+    EXPECT_EQ(config->bind_address, "127.0.0.1");
+    EXPECT_EQ(config->port, 8081);
+    EXPECT_EQ(config->model_id, "demo-model");
+    EXPECT_EQ(config->sessions.max_sessions, 3u);
+    EXPECT_EQ(config->sessions.idle_ttl_seconds, 600u);
+    EXPECT_EQ(config->zoo_config.model_path, "/tmp/demo.gguf");
+    EXPECT_EQ(config->zoo_config.max_tokens, 32);
+}
+
+TEST(ConfigTest, UnknownKeyRejected) {
+    TempDir tmp;
+    auto file = tmp.path / "invalid.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
   "model_id": "demo-model",
-  "zoo": {
-    "model_path": "/tmp/demo.gguf"
-  },
+  "zoo": { "model_path": "/tmp/demo.gguf" },
   "extra_key": true
-})json")) {
-        std::cerr << "Failed to write invalid config fixture." << '\n';
-        cleanup();
-        return 1;
-    }
+})json"));
 
-    if (!write_text_file(empty_api_key_path,
-                         R"json({
+    auto config = zks::server::load_config(file);
+    ASSERT_FALSE(config.has_value());
+    EXPECT_NE(config.error().find("Unknown server config key: extra_key"), std::string::npos);
+}
+
+TEST(ConfigTest, EmptyApiKeyRejected) {
+    TempDir tmp;
+    auto file = tmp.path / "empty_api_key.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
   "model_id": "demo-model",
   "api_key": "",
-  "zoo": {
-    "model_path": "/tmp/demo.gguf"
-  }
-})json")) {
-        std::cerr << "Failed to write empty api_key config fixture." << '\n';
-        cleanup();
-        return 1;
-    }
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json"));
 
-    if (!write_text_file(tools_path,
-                         R"json({
+    auto config = zks::server::load_config(file);
+    ASSERT_FALSE(config.has_value());
+    EXPECT_NE(config.error().find("api_key must not be empty"), std::string::npos);
+}
+
+TEST(ConfigTest, HttpDefaultsWhenSectionOmitted) {
+    TempDir tmp;
+    auto file = tmp.path / "no_http.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
+  "model_id": "demo-model",
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json"));
+
+    auto config = zks::server::load_config(file);
+    ASSERT_TRUE(config.has_value());
+    EXPECT_EQ(config->http.client_max_body_size_bytes, 1048576);
+    EXPECT_EQ(config->http.client_max_memory_body_size_bytes, 65536);
+    EXPECT_EQ(config->http.idle_connection_timeout_seconds, 60);
+}
+
+TEST(ConfigTest, ToolsConfigParsesCorrectly) {
+    TempDir tmp;
+    auto file = tmp.path / "tools.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
   "model_id": "demo-model",
   "tools": [{
     "name": "env",
     "description": "Print environment",
     "parameters": {
       "type": "object",
-      "properties": {
-        "value": { "type": "string" }
-      },
+      "properties": { "value": { "type": "string" } },
       "required": ["value"],
       "additionalProperties": false
     },
     "command": ["/usr/bin/env"],
     "inherit_environment": true,
     "timeout_ms": 1500,
-    "env": {
-      "ZKS_TEST_FLAG": "1"
-    }
+    "env": { "ZKS_TEST_FLAG": "1" }
   }],
-  "zoo": {
-    "model_path": "/tmp/demo.gguf"
-  }
-})json")) {
-        std::cerr << "Failed to write tools config fixture." << '\n';
-        cleanup();
-        return 1;
-    }
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json"));
 
-    if (!write_text_file(missing_tool_path,
-                         R"json({
+    auto cfg = zks::server::load_config(file);
+    ASSERT_TRUE(cfg.has_value());
+    ASSERT_EQ(cfg->tools.size(), 1u);
+    EXPECT_EQ(cfg->tools[0].name, "env");
+    EXPECT_EQ(cfg->tools[0].command.size(), 1u);
+    EXPECT_EQ(cfg->tools[0].command[0], "/usr/bin/env");
+    EXPECT_TRUE(cfg->tools[0].inherit_environment);
+    EXPECT_EQ(cfg->tools[0].timeout_ms, 1500);
+    EXPECT_EQ(cfg->tools[0].env.at("ZKS_TEST_FLAG"), "1");
+}
+
+TEST(ConfigTest, InheritEnvironmentDefaultsFalse) {
+    TempDir tmp;
+    auto file = tmp.path / "default_env.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
+  "model_id": "demo-model",
+  "tools": [{
+    "name": "env-default",
+    "description": "Print environment",
+    "parameters": { "type": "object", "properties": {}, "additionalProperties": false },
+    "command": ["/usr/bin/env"]
+  }],
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json"));
+
+    auto cfg = zks::server::load_config(file);
+    ASSERT_TRUE(cfg.has_value());
+    ASSERT_EQ(cfg->tools.size(), 1u);
+    EXPECT_FALSE(cfg->tools[0].inherit_environment);
+}
+
+TEST(ConfigTest, MissingToolExecutableRejectedAtProviderCreation) {
+    TempDir tmp;
+    auto file = tmp.path / "missing_tool.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
   "model_id": "demo-model",
   "tools": [{
     "name": "missing",
     "description": "Missing executable",
-    "parameters": {
-      "type": "object",
-      "properties": {},
-      "additionalProperties": false
-    },
+    "parameters": { "type": "object", "properties": {}, "additionalProperties": false },
     "command": ["/definitely/missing/tool"]
   }],
-  "zoo": {
-    "model_path": "/tmp/demo.gguf"
-  }
-})json")) {
-        std::cerr << "Failed to write missing tool config fixture." << '\n';
-        cleanup();
-        return 1;
-    }
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json"));
 
-    if (!write_text_file(bad_tool_schema_path,
-                         R"json({
+    auto cfg = zks::server::load_config(file);
+    ASSERT_TRUE(cfg.has_value());
+    auto provider = zks::server::make_command_tool_provider(cfg->tools);
+    ASSERT_FALSE(provider.has_value());
+    EXPECT_NE(provider.error().find("executable not found"), std::string::npos);
+}
+
+TEST(ConfigTest, BadToolSchemaRejected) {
+    TempDir tmp;
+    auto file = tmp.path / "bad_schema.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
   "model_id": "demo-model",
   "tools": [{
     "name": "bad-schema",
     "description": "Unsupported schema",
     "parameters": {
       "type": "object",
-      "properties": {
-        "nested": {
-          "type": "object"
-        }
-      }
+      "properties": { "nested": { "type": "object" } }
     },
     "command": ["/usr/bin/env"]
   }],
-  "zoo": {
-    "model_path": "/tmp/demo.gguf"
-  }
-})json")) {
-        std::cerr << "Failed to write bad tool schema config fixture." << '\n';
-        cleanup();
-        return 1;
-    }
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json"));
 
-    auto valid_config = zks::server::load_config(valid_path);
-    if (!valid_config) {
-        std::cerr << "Valid config unexpectedly failed: " << valid_config.error() << '\n';
-        cleanup();
-        return 1;
-    }
+    auto cfg = zks::server::load_config(file);
+    ASSERT_FALSE(cfg.has_value());
+    EXPECT_NE(cfg.error().find("unsupported type: object"), std::string::npos);
+}
 
-    if (valid_config->bind_address != "127.0.0.1" || valid_config->port != 8081 ||
-        valid_config->model_id != "demo-model" ||
-        valid_config->sessions.max_sessions != 3 || valid_config->sessions.idle_ttl_seconds != 600 ||
-        valid_config->zoo_config.model_path != "/tmp/demo.gguf" ||
-        valid_config->zoo_config.max_tokens != 32) {
-        std::cerr << "Valid config parsed with unexpected values." << '\n';
-        cleanup();
-        return 1;
-    }
-
-    auto invalid_config = zks::server::load_config(invalid_path);
-    if (invalid_config) {
-        std::cerr << "Invalid config unexpectedly parsed successfully." << '\n';
-        cleanup();
-        return 1;
-    }
-
-    if (invalid_config.error().find("Unknown server config key: extra_key") == std::string::npos) {
-        std::cerr << "Invalid config failed for the wrong reason: " << invalid_config.error()
-                  << '\n';
-        cleanup();
-        return 1;
-    }
-
-    auto empty_api_key_config = zks::server::load_config(empty_api_key_path);
-    if (empty_api_key_config) {
-        std::cerr << "Empty api_key config unexpectedly parsed successfully." << '\n';
-        cleanup();
-        return 1;
-    }
-
-    if (empty_api_key_config.error().find("api_key must not be empty") == std::string::npos) {
-        std::cerr << "Empty api_key config failed for the wrong reason: "
-                  << empty_api_key_config.error() << '\n';
-        cleanup();
-        return 1;
-    }
-
-    // http defaults when omitted
-    if (valid_config->http.client_max_body_size_bytes != 1048576 ||
-        valid_config->http.client_max_memory_body_size_bytes != 65536 ||
-        valid_config->http.idle_connection_timeout_seconds != 60) {
-        std::cerr << "http defaults not applied when section omitted." << '\n';
-        cleanup();
-        return 1;
-    }
-
-    {
-        auto cfg = zks::server::load_config(tools_path);
-        if (!cfg) {
-            std::cerr << "tools config unexpectedly failed: " << cfg.error() << '\n';
-            cleanup();
-            return 1;
-        }
-        if (cfg->tools.size() != 1 || cfg->tools[0].name != "env" ||
-            cfg->tools[0].command.size() != 1 ||
-            cfg->tools[0].command[0] != "/usr/bin/env" ||
-            !cfg->tools[0].inherit_environment ||
-            cfg->tools[0].timeout_ms != 1500 ||
-            cfg->tools[0].env.at("ZKS_TEST_FLAG") != "1") {
-            std::cerr << "tools config parsed with unexpected values." << '\n';
-            cleanup();
-            return 1;
-        }
-    }
-
-    {
-        const auto tools_default_env_path = temp_dir / "tools_default_env.json";
-        if (!write_text_file(tools_default_env_path,
-                             R"json({
-  "model_id": "demo-model",
-  "tools": [{
-    "name": "env-default",
-    "description": "Print environment",
-    "parameters": {
-      "type": "object",
-      "properties": {},
-      "additionalProperties": false
-    },
-    "command": ["/usr/bin/env"]
-  }],
-  "zoo": {
-    "model_path": "/tmp/demo.gguf"
-  }
-})json")) {
-            std::cerr << "Failed to write default env tool config fixture." << '\n';
-            cleanup();
-            return 1;
-        }
-
-        auto cfg = zks::server::load_config(tools_default_env_path);
-        if (!cfg) {
-            std::cerr << "default env tool config unexpectedly failed: " << cfg.error() << '\n';
-            cleanup();
-            return 1;
-        }
-        if (cfg->tools.size() != 1 || cfg->tools[0].inherit_environment) {
-            std::cerr << "inherit_environment should default to false." << '\n';
-            cleanup();
-            return 1;
-        }
-    }
-
-    {
-        auto cfg = zks::server::load_config(missing_tool_path);
-        if (!cfg) {
-            std::cerr << "Missing tool config should pass semantic config validation: "
-                      << cfg.error() << '\n';
-            cleanup();
-            return 1;
-        }
-        auto provider = zks::server::make_command_tool_provider(cfg->tools);
-        if (provider) {
-            std::cerr << "Missing tool provider unexpectedly prepared successfully." << '\n';
-            cleanup();
-            return 1;
-        }
-        if (provider.error().find("executable not found") == std::string::npos) {
-            std::cerr << "Missing tool provider failed for wrong reason: " << provider.error()
-                      << '\n';
-            cleanup();
-            return 1;
-        }
-    }
-
-    {
-        auto cfg = zks::server::load_config(bad_tool_schema_path);
-        if (cfg) {
-            std::cerr << "Bad tool schema config unexpectedly parsed successfully." << '\n';
-            cleanup();
-            return 1;
-        }
-        if (cfg.error().find("unsupported type: object") == std::string::npos) {
-            std::cerr << "Bad tool schema config failed for wrong reason: " << cfg.error()
-                      << '\n';
-            cleanup();
-            return 1;
-        }
-    }
-
-    // explicit http overrides
-    {
-        const auto http_override_path = temp_dir / "http_override.json";
-        if (!write_text_file(http_override_path,
-                             R"json({
+TEST(ConfigTest, ExplicitHttpOverrides) {
+    TempDir tmp;
+    auto file = tmp.path / "http_override.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
   "model_id": "demo-model",
   "http": {
     "client_max_body_size_bytes": 2097152,
     "client_max_memory_body_size_bytes": 131072,
     "idle_connection_timeout_seconds": 120
   },
-  "zoo": {
-    "model_path": "/tmp/demo.gguf"
-  }
-})json")) {
-            std::cerr << "Failed to write http override config fixture." << '\n';
-            cleanup();
-            return 1;
-        }
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json"));
 
-        auto cfg = zks::server::load_config(http_override_path);
-        if (!cfg) {
-            std::cerr << "http override config unexpectedly failed: " << cfg.error() << '\n';
-            cleanup();
-            return 1;
-        }
-        if (cfg->http.client_max_body_size_bytes != 2097152 ||
-            cfg->http.client_max_memory_body_size_bytes != 131072 ||
-            cfg->http.idle_connection_timeout_seconds != 120) {
-            std::cerr << "http overrides not parsed correctly." << '\n';
-            cleanup();
-            return 1;
-        }
-    }
+    auto cfg = zks::server::load_config(file);
+    ASSERT_TRUE(cfg.has_value());
+    EXPECT_EQ(cfg->http.client_max_body_size_bytes, 2097152);
+    EXPECT_EQ(cfg->http.client_max_memory_body_size_bytes, 131072);
+    EXPECT_EQ(cfg->http.idle_connection_timeout_seconds, 120);
+}
 
-    // unknown http key rejected
-    {
-        const auto unknown_http_path = temp_dir / "unknown_http.json";
-        if (!write_text_file(unknown_http_path,
-                             R"json({
+TEST(ConfigTest, UnknownHttpKeyRejected) {
+    TempDir tmp;
+    auto file = tmp.path / "unknown_http.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
   "model_id": "demo-model",
   "http": { "bad_key": 42 },
   "zoo": { "model_path": "/tmp/demo.gguf" }
-})json")) {
-            std::cerr << "Failed to write unknown http key config fixture." << '\n';
-            cleanup();
-            return 1;
-        }
+})json"));
 
-        auto cfg = zks::server::load_config(unknown_http_path);
-        if (cfg) {
-            std::cerr << "Unknown http key config unexpectedly parsed successfully." << '\n';
-            cleanup();
-            return 1;
-        }
-        if (cfg.error().find("Unknown http config key: bad_key") == std::string::npos) {
-            std::cerr << "Unknown http key config failed for wrong reason: " << cfg.error()
-                      << '\n';
-            cleanup();
-            return 1;
-        }
-    }
+    auto cfg = zks::server::load_config(file);
+    ASSERT_FALSE(cfg.has_value());
+    EXPECT_NE(cfg.error().find("Unknown http config key: bad_key"), std::string::npos);
+}
 
-    // non-positive client_max_body_size_bytes rejected
-    {
-        const auto bad_body_path = temp_dir / "bad_body.json";
-        if (!write_text_file(bad_body_path,
-                             R"json({
+TEST(ConfigTest, NonPositiveBodySizeRejected) {
+    TempDir tmp;
+    auto file = tmp.path / "bad_body.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
   "model_id": "demo-model",
   "http": { "client_max_body_size_bytes": 0 },
   "zoo": { "model_path": "/tmp/demo.gguf" }
-})json")) {
-            std::cerr << "Failed to write bad body size config fixture." << '\n';
-            cleanup();
-            return 1;
-        }
+})json"));
 
-        auto cfg = zks::server::load_config(bad_body_path);
-        if (cfg) {
-            std::cerr << "Non-positive body size config unexpectedly parsed successfully." << '\n';
-            cleanup();
-            return 1;
-        }
-        if (cfg.error().find("client_max_body_size_bytes must be > 0") == std::string::npos) {
-            std::cerr << "Bad body size config failed for wrong reason: " << cfg.error() << '\n';
-            cleanup();
-            return 1;
-        }
-    }
+    auto cfg = zks::server::load_config(file);
+    ASSERT_FALSE(cfg.has_value());
+    EXPECT_NE(cfg.error().find("client_max_body_size_bytes must be > 0"), std::string::npos);
+}
 
-    // non-positive client_max_memory_body_size_bytes rejected
-    {
-        const auto bad_mem_path = temp_dir / "bad_mem.json";
-        if (!write_text_file(bad_mem_path,
-                             R"json({
+TEST(ConfigTest, NonPositiveMemoryBodySizeRejected) {
+    TempDir tmp;
+    auto file = tmp.path / "bad_mem.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
   "model_id": "demo-model",
   "http": { "client_max_memory_body_size_bytes": -1 },
   "zoo": { "model_path": "/tmp/demo.gguf" }
-})json")) {
-            std::cerr << "Failed to write bad memory body size config fixture." << '\n';
-            cleanup();
-            return 1;
-        }
+})json"));
 
-        auto cfg = zks::server::load_config(bad_mem_path);
-        if (cfg) {
-            std::cerr
-                << "Non-positive memory body size config unexpectedly parsed successfully." << '\n';
-            cleanup();
-            return 1;
-        }
-        if (cfg.error().find("client_max_memory_body_size_bytes must be > 0") ==
-            std::string::npos) {
-            std::cerr << "Bad memory body size config failed for wrong reason: " << cfg.error()
-                      << '\n';
-            cleanup();
-            return 1;
-        }
-    }
+    auto cfg = zks::server::load_config(file);
+    ASSERT_FALSE(cfg.has_value());
+    EXPECT_NE(cfg.error().find("client_max_memory_body_size_bytes must be > 0"), std::string::npos);
+}
 
-    // idle_connection_timeout_seconds = 0 accepted (explicit opt-out)
-    {
-        const auto timeout_zero_path = temp_dir / "timeout_zero.json";
-        if (!write_text_file(timeout_zero_path,
-                             R"json({
+TEST(ConfigTest, IdleTimeoutZeroAccepted) {
+    TempDir tmp;
+    auto file = tmp.path / "timeout_zero.json";
+    ASSERT_TRUE(write_text_file(file,
+        R"json({
   "model_id": "demo-model",
   "http": { "idle_connection_timeout_seconds": 0 },
   "zoo": { "model_path": "/tmp/demo.gguf" }
-})json")) {
-            std::cerr << "Failed to write timeout zero config fixture." << '\n';
-            cleanup();
-            return 1;
-        }
+})json"));
 
-        auto cfg = zks::server::load_config(timeout_zero_path);
-        if (!cfg) {
-            std::cerr << "idle_connection_timeout_seconds=0 should be accepted but failed: "
-                      << cfg.error() << '\n';
-            cleanup();
-            return 1;
-        }
-        if (cfg->http.idle_connection_timeout_seconds != 0) {
-            std::cerr << "idle_connection_timeout_seconds=0 not parsed correctly." << '\n';
-            cleanup();
-            return 1;
-        }
-    }
+    auto cfg = zks::server::load_config(file);
+    ASSERT_TRUE(cfg.has_value());
+    EXPECT_EQ(cfg->http.idle_connection_timeout_seconds, 0);
+}
 
-    {
-        zks::server::ServerConfig config;
-        config.bind_address = "0.0.0.0";
-        config.model_id = "demo-model";
-        config.zoo_config.model_path = "/tmp/demo.gguf";
+TEST(ConfigTest, StartupWarningForRemoteBindWithoutAuth) {
+    zks::server::ServerConfig config;
+    config.bind_address = "0.0.0.0";
+    config.model_id = "demo-model";
+    config.zoo_config.model_path = "/tmp/demo.gguf";
 
-        const auto warning = zks::server::startup_warning(config);
-        if (!warning.has_value() ||
-            warning->find("non-loopback address without api_key auth enabled") ==
-                std::string::npos) {
-            std::cerr << "Expected startup warning for remote bind without auth." << '\n';
-            cleanup();
-            return 1;
-        }
-    }
+    auto warning = zks::server::startup_warning(config);
+    ASSERT_TRUE(warning.has_value());
+    EXPECT_NE(warning->find("non-loopback address without api_key auth enabled"),
+              std::string::npos);
+}
 
-    {
-        zks::server::ServerConfig config;
-        config.bind_address = "127.0.0.1";
-        config.model_id = "demo-model";
-        config.zoo_config.model_path = "/tmp/demo.gguf";
+TEST(ConfigTest, LoopbackBindNoWarning) {
+    zks::server::ServerConfig config;
+    config.bind_address = "127.0.0.1";
+    config.model_id = "demo-model";
+    config.zoo_config.model_path = "/tmp/demo.gguf";
 
-        if (zks::server::startup_warning(config).has_value()) {
-            std::cerr << "Loopback bind should not emit a startup warning." << '\n';
-            cleanup();
-            return 1;
-        }
-    }
+    EXPECT_FALSE(zks::server::startup_warning(config).has_value());
+}
 
-    {
-        zks::server::ServerConfig config;
-        config.bind_address = "0.0.0.0";
-        config.model_id = "demo-model";
-        config.api_key = "secret";
-        config.zoo_config.model_path = "/tmp/demo.gguf";
+TEST(ConfigTest, AuthenticatedRemoteBindNoWarning) {
+    zks::server::ServerConfig config;
+    config.bind_address = "0.0.0.0";
+    config.model_id = "demo-model";
+    config.api_key = "secret";
+    config.zoo_config.model_path = "/tmp/demo.gguf";
 
-        if (zks::server::startup_warning(config).has_value()) {
-            std::cerr << "Authenticated remote bind should not emit a startup warning." << '\n';
-            cleanup();
-            return 1;
-        }
-    }
-
-    cleanup();
-    return 0;
+    EXPECT_FALSE(zks::server::startup_warning(config).has_value());
 }

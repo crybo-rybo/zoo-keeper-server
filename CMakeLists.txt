@@ -135,95 +135,69 @@ target_compile_features(zoo_keeper_live_smoke PRIVATE cxx_std_23)
 target_link_libraries(zoo_keeper_live_smoke PRIVATE ZooKeeper::zoo)
 
 if(BUILD_TESTING)
-    add_executable(zks_config_test
-        tests/config_test.cpp
+    # --- GoogleTest (fetched only when BUILD_TESTING=ON) ---
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.15.2
+        GIT_SHALLOW TRUE
     )
-    target_compile_features(zks_config_test PRIVATE cxx_std_23)
-    target_link_libraries(zks_config_test PRIVATE zks_server_core)
+    FetchContent_MakeAvailable(googletest)
 
-    add_executable(zks_health_test
-        tests/health_test.cpp
-    )
-    target_compile_features(zks_health_test PRIVATE cxx_std_23)
-    target_link_libraries(zks_health_test PRIVATE zks_server_core)
+    # --- test helper ---
+    function(zks_add_test TEST_NAME)
+        cmake_parse_arguments(ARG "OWN_MAIN" "" "SOURCES;LIBS" ${ARGN})
+        add_executable(zks_${TEST_NAME} ${ARG_SOURCES})
+        target_compile_features(zks_${TEST_NAME} PRIVATE cxx_std_23)
+        if(ARG_OWN_MAIN)
+            target_link_libraries(zks_${TEST_NAME} PRIVATE
+                zks_server_core GTest::gtest ${ARG_LIBS})
+        else()
+            target_link_libraries(zks_${TEST_NAME} PRIVATE
+                zks_server_core GTest::gtest_main ${ARG_LIBS})
+        endif()
+        add_test(NAME ${TEST_NAME} COMMAND zks_${TEST_NAME})
+    endfunction()
 
-    add_executable(zks_api_test
-        tests/api_test.cpp
-    )
-    target_compile_features(zks_api_test PRIVATE cxx_std_23)
-    target_link_libraries(zks_api_test PRIVATE zks_server_core)
+    # --- Unit tests ---
+    zks_add_test(config_parse_test SOURCES tests/config_test.cpp)
+    zks_add_test(health_response_test SOURCES tests/health_test.cpp)
+    zks_add_test(api_response_test SOURCES tests/api_test.cpp)
+    zks_add_test(runtime_stop_test SOURCES tests/runtime_test.cpp)
+    zks_add_test(session_manager_test SOURCES tests/session_manager_test.cpp)
+    zks_add_test(auth_test SOURCES tests/auth_test.cpp)
+    zks_add_test(metrics_test SOURCES tests/metrics_test.cpp)
+    zks_add_test(http_integration_test SOURCES tests/http_integration_test.cpp)
+    set_tests_properties(http_integration_test PROPERTIES TIMEOUT 30)
+    zks_add_test(streaming_test SOURCES tests/streaming_test.cpp)
+    zks_add_test(executor_test SOURCES tests/executor_test.cpp)
+    zks_add_test(zoo_adapter_test SOURCES tests/zoo_adapter_test.cpp)
 
-    add_executable(zks_runtime_test
-        tests/runtime_test.cpp
-    )
-    target_compile_features(zks_runtime_test PRIVATE cxx_std_23)
-    target_link_libraries(zks_runtime_test PRIVATE zks_server_core)
-
-    add_executable(zks_session_manager_test
-        tests/session_manager_test.cpp
-    )
-    target_compile_features(zks_session_manager_test PRIVATE cxx_std_23)
-    target_link_libraries(zks_session_manager_test PRIVATE zks_server_core)
-
-    add_executable(zks_auth_test
-        tests/auth_test.cpp
-    )
-    target_compile_features(zks_auth_test PRIVATE cxx_std_23)
-    target_link_libraries(zks_auth_test PRIVATE zks_server_core)
-
-    add_executable(zks_metrics_test
-        tests/metrics_test.cpp
-    )
-    target_compile_features(zks_metrics_test PRIVATE cxx_std_23)
-    target_link_libraries(zks_metrics_test PRIVATE zks_server_core)
-
-    add_executable(zks_http_integration_test
-        tests/http_integration_test.cpp
-    )
-    target_compile_features(zks_http_integration_test PRIVATE cxx_std_23)
-    target_link_libraries(zks_http_integration_test PRIVATE zks_server_core)
-
-    add_executable(zks_tool_test_helper
-        tests/tool_test_helper.cpp
-    )
+    # tool_test_helper is a subprocess, not a test itself
+    add_executable(zks_tool_test_helper tests/tool_test_helper.cpp)
     target_compile_features(zks_tool_test_helper PRIVATE cxx_std_23)
     target_link_libraries(zks_tool_test_helper PRIVATE zks_server_core)
 
-    add_executable(zks_command_tools_test
-        tests/command_tools_test.cpp
-    )
+    # command_tools_test has its own main (OWN_MAIN) and passes helper path via argv
+    add_executable(zks_command_tools_test tests/command_tools_test.cpp)
     target_compile_features(zks_command_tools_test PRIVATE cxx_std_23)
-    target_link_libraries(zks_command_tools_test PRIVATE zks_server_core)
+    target_link_libraries(zks_command_tools_test PRIVATE zks_server_core GTest::gtest)
+    add_test(
+        NAME command_tools_test
+        COMMAND zks_command_tools_test $<TARGET_FILE:zks_tool_test_helper>
+    )
 
     if(ZKS_ENABLE_TEST_UI)
-        add_executable(zks_test_ui_test
-            tests/test_ui_test.cpp
-        )
-        target_compile_features(zks_test_ui_test PRIVATE cxx_std_23)
-        target_link_libraries(zks_test_ui_test PRIVATE zks_server_core)
+        zks_add_test(test_ui_response_test SOURCES tests/test_ui_test.cpp)
     endif()
 
+    # --- Non-GTest tests ---
     add_test(NAME baseline_link_smoke COMMAND zoo_keeper_link_smoke)
     set_tests_properties(baseline_link_smoke PROPERTIES
         PASS_REGULAR_EXPRESSION "Observed expected InvalidModelPath validation failure."
     )
 
-    add_test(NAME config_parse_test COMMAND zks_config_test)
-    add_test(NAME health_response_test COMMAND zks_health_test)
-    add_test(NAME api_response_test COMMAND zks_api_test)
-    add_test(NAME runtime_stop_test COMMAND zks_runtime_test)
-    add_test(NAME session_manager_test COMMAND zks_session_manager_test)
-    add_test(NAME auth_test COMMAND zks_auth_test)
-    add_test(NAME metrics_test COMMAND zks_metrics_test)
-    add_test(NAME http_integration_test COMMAND zks_http_integration_test)
-    add_test(
-        NAME command_tools_test
-        COMMAND zks_command_tools_test $<TARGET_FILE:zks_tool_test_helper>
-    )
-    set_tests_properties(http_integration_test PROPERTIES TIMEOUT 30)
-    if(ZKS_ENABLE_TEST_UI)
-        add_test(NAME test_ui_response_test COMMAND zks_test_ui_test)
-    endif()
     add_test(
         NAME server_startup_missing_model
         COMMAND ${CMAKE_COMMAND}

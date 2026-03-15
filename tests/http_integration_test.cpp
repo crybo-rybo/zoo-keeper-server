@@ -5,27 +5,22 @@
 
 #include "fake_chat_service.hpp"
 
+#include <gtest/gtest.h>
+
 #include <chrono>
 #include <condition_variable>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <thread>
 
 #include <drogon/drogon.h>
 #include <nlohmann/json.hpp>
+
 namespace {
 
-int fail(std::string_view message) {
-    std::cerr << message << '\n';
-    return 1;
-}
-
 /// Fetches /metrics and returns the value of a specific uint64 counter field.
-/// Returns std::nullopt on transport or parse failure.
 std::optional<int64_t> read_metric(const drogon::HttpClientPtr& client, const char* field) {
     auto req = drogon::HttpRequest::newHttpRequest();
     req->setPath("/metrics");
@@ -43,401 +38,384 @@ std::optional<int64_t> read_metric(const drogon::HttpClientPtr& client, const ch
     return json.at(field).get<int64_t>();
 }
 
+// Shared state for the Drogon singleton (can only be started once per process)
+struct ServerState {
+    std::shared_ptr<FakeChatService> chat_service;
+    std::shared_ptr<zks::server::ServerRuntime> runtime;
+    std::shared_ptr<zks::server::DisconnectRegistry> disconnect_registry;
+    drogon::HttpClientPtr client;
+    std::thread server_thread;
+    bool started = false;
+};
+
+ServerState* g_state = nullptr;
+
 } // namespace
 
-int main() {
-    // Build a runtime with the fake chat service
-    auto chat_service = std::make_shared<FakeChatService>();
-    chat_service->set_model_id("integration-test-model");
+class HttpIntegrationTest : public ::testing::Test {
+  public:
+    static void SetUpTestSuite() {
+        g_state = new ServerState();
+        g_state->chat_service = std::make_shared<FakeChatService>();
+        g_state->chat_service->set_model_id("integration-test-model");
 
-    zks::server::ServerConfig config;
-    config.model_id = "integration-test-model";
-    config.api_key = "test-secret";
-    config.zoo_config.model_path = "/tmp/integration-test.gguf";
-    config.http.client_max_body_size_bytes = 512; // intentionally small for 413 test
+        zks::server::ServerConfig config;
+        config.model_id = "integration-test-model";
+        config.api_key = "test-secret";
+        config.zoo_config.model_path = "/tmp/integration-test.gguf";
+        config.http.client_max_body_size_bytes = 512;
 
-    auto runtime = std::make_shared<zks::server::ServerRuntime>(config, chat_service);
-    auto disconnect_registry = std::make_shared<zks::server::DisconnectRegistry>();
+        g_state->runtime = std::make_shared<zks::server::ServerRuntime>(config, g_state->chat_service);
+        g_state->disconnect_registry = std::make_shared<zks::server::DisconnectRegistry>();
 
-    zks::server::register_health_routes(drogon::app(), runtime);
-    zks::server::register_api_routes(drogon::app(), runtime, disconnect_registry);
+        zks::server::register_health_routes(drogon::app(), g_state->runtime);
+        zks::server::register_api_routes(drogon::app(), g_state->runtime, g_state->disconnect_registry);
 
-    // Signal when the server loop starts
-    std::mutex startup_mutex;
-    std::condition_variable startup_cv;
-    bool started = false;
+        std::mutex startup_mutex;
+        std::condition_variable startup_cv;
+        bool started = false;
 
-    drogon::app().registerBeginningAdvice([&] {
-        std::lock_guard<std::mutex> lock(startup_mutex);
-        started = true;
-        startup_cv.notify_all();
-    });
+        drogon::app().registerBeginningAdvice([&] {
+            std::lock_guard<std::mutex> lock(startup_mutex);
+            started = true;
+            startup_cv.notify_all();
+        });
 
-    std::thread server_thread([&config, &disconnect_registry] {
-        drogon::app()
-            .addListener("127.0.0.1", 0)
-            .setClientMaxBodySize(
-                static_cast<size_t>(config.http.client_max_body_size_bytes))
-            .setClientMaxMemoryBodySize(
-                static_cast<size_t>(config.http.client_max_memory_body_size_bytes))
-            .setConnectionCallback(
-                [disconnect_registry](const trantor::TcpConnectionPtr& connection) {
-                    disconnect_registry->handle_connection_event(connection);
-                })
-            .setLogLevel(trantor::Logger::kFatal)
-            .disableSession()
-            .run();
-    });
+        auto disconnect_registry = g_state->disconnect_registry;
+        g_state->server_thread = std::thread([&config, disconnect_registry] {
+            drogon::app()
+                .addListener("127.0.0.1", 0)
+                .setClientMaxBodySize(
+                    static_cast<size_t>(config.http.client_max_body_size_bytes))
+                .setClientMaxMemoryBodySize(
+                    static_cast<size_t>(config.http.client_max_memory_body_size_bytes))
+                .setConnectionCallback(
+                    [disconnect_registry](const trantor::TcpConnectionPtr& connection) {
+                        disconnect_registry->handle_connection_event(connection);
+                    })
+                .setLogLevel(trantor::Logger::kFatal)
+                .disableSession()
+                .run();
+        });
 
-    // Wait for Drogon to start
-    {
-        std::unique_lock<std::mutex> lock(startup_mutex);
-        startup_cv.wait_for(lock, std::chrono::seconds(10), [&] { return started; });
-        if (!started) {
-            std::cerr << "Server failed to start within 10 seconds." << '\n';
+        {
+            std::unique_lock<std::mutex> lock(startup_mutex);
+            startup_cv.wait_for(lock, std::chrono::seconds(10), [&] { return started; });
+            ASSERT_TRUE(started) << "Server failed to start within 10 seconds.";
+        }
+
+        auto listeners = drogon::app().getListeners();
+        ASSERT_FALSE(listeners.empty());
+        uint16_t port = listeners[0].toPort();
+
+        g_state->client = drogon::HttpClient::newHttpClient("127.0.0.1", port, false,
+                                                             drogon::app().getLoop());
+        g_state->started = true;
+    }
+
+    static void TearDownTestSuite() {
+        if (g_state) {
+            g_state->client.reset();
             drogon::app().quit();
-            server_thread.join();
-            return 1;
-        }
-    }
-
-    // Read the assigned port
-    auto listeners = drogon::app().getListeners();
-    if (listeners.empty()) {
-        std::cerr << "No listeners found after startup." << '\n';
-        drogon::app().quit();
-        server_thread.join();
-        return 1;
-    }
-    uint16_t port = listeners[0].toPort();
-
-    // Create a client using the Drogon event loop (sync sendRequest is called from main thread)
-    auto client = drogon::HttpClient::newHttpClient("127.0.0.1", port, false,
-                                                     drogon::app().getLoop());
-
-    int result = 0;
-
-    // Test 1: GET /healthz → 200
-    {
-        auto req = drogon::HttpRequest::newHttpRequest();
-        req->setPath("/healthz");
-        req->setMethod(drogon::Get);
-        auto [status, resp] = client->sendRequest(req, 5.0);
-        if (status != drogon::ReqResult::Ok || !resp ||
-            resp->getStatusCode() != drogon::k200OK) {
-            result = fail("Test 1 failed: GET /healthz should return 200.");
-        }
-    }
-
-    // Test 2: GET /v1/models without auth → 401
-    if (result == 0) {
-        auto req = drogon::HttpRequest::newHttpRequest();
-        req->setPath("/v1/models");
-        req->setMethod(drogon::Get);
-        auto [status, resp] = client->sendRequest(req, 5.0);
-        if (status != drogon::ReqResult::Ok || !resp ||
-            resp->getStatusCode() != drogon::k401Unauthorized) {
-            result = fail("Test 2 failed: GET /v1/models without auth should return 401.");
-        }
-    }
-
-    // Test 3: POST /v1/chat/completions with oversized body → 413
-    if (result == 0) {
-        auto req = drogon::HttpRequest::newHttpRequest();
-        req->setPath("/v1/chat/completions");
-        req->setMethod(drogon::Post);
-        req->addHeader("Authorization", "Bearer test-secret");
-        req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-        // Create a body larger than the 512-byte limit
-        std::string big_body(1024, 'x');
-        req->setBody(std::move(big_body));
-        auto [status, resp] = client->sendRequest(req, 5.0);
-        if (status != drogon::ReqResult::Ok || !resp ||
-            resp->getStatusCode() != drogon::k413RequestEntityTooLarge) {
-            auto actual_code = resp ? static_cast<int>(resp->getStatusCode()) : -1;
-            std::cerr << "Test 3 failed: oversized POST should return 413, got " << actual_code
-                      << '\n';
-            result = 1;
-        }
-    }
-
-    // Test 4: POST /v1/chat/completions with valid JSON → 500 (fake service returns error)
-    if (result == 0) {
-        auto req = drogon::HttpRequest::newHttpRequest();
-        req->setPath("/v1/chat/completions");
-        req->setMethod(drogon::Post);
-        req->addHeader("Authorization", "Bearer test-secret");
-        req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-        nlohmann::json body = {
-            {"model", "integration-test-model"},
-            {"messages", {{{"role", "user"}, {"content", "hi"}}}},
-            {"stream", false}};
-        req->setBody(body.dump());
-        auto [status, resp] = client->sendRequest(req, 5.0);
-        if (status != drogon::ReqResult::Ok || !resp) {
-            result = fail("Test 4 failed: valid completion request should get a response.");
-        } else {
-            // Expect 500 because FakeChatService returns server_error
-            auto code = static_cast<int>(resp->getStatusCode());
-            if (code != 500) {
-                std::cerr << "Test 4 failed: expected 500 from fake service, got " << code << '\n';
-                result = 1;
+            if (g_state->server_thread.joinable()) {
+                g_state->server_thread.join();
             }
+            g_state->runtime->stop();
+            delete g_state;
+            g_state = nullptr;
         }
     }
 
-    // Test 5: GET /metrics → 200 with all expected fields
-    if (result == 0) {
-        auto req = drogon::HttpRequest::newHttpRequest();
-        req->setPath("/metrics");
-        req->setMethod(drogon::Get);
-        req->addHeader("Authorization", "Bearer test-secret");
-        auto [status, resp] = client->sendRequest(req, 5.0);
-        if (status != drogon::ReqResult::Ok || !resp ||
-            resp->getStatusCode() != drogon::k200OK) {
-            result = fail("Test 5 failed: GET /metrics should return 200.");
-        } else {
-            auto json = nlohmann::json::parse(std::string(resp->body()), nullptr, false);
-            if (json.is_discarded()) {
-                result = fail("Test 5 failed: /metrics response is not valid JSON.");
-            } else {
-                // Check all expected fields exist
-                const char* required_fields[] = {"requests_total",
-                                                 "requests_errors",
-                                                 "requests_cancelled_total",
-                                                 "requests_queue_rejected_total",
-                                                 "stream_disconnects_total",
-                                                 "tool_invocations_total",
-                                                 "tool_failures_total",
-                                                 "tool_timeouts_total",
-                                                 "active_sessions",
-                                                 "model_id",
-                                                 "uptime_seconds"};
-                for (const auto* field : required_fields) {
-                    if (!json.contains(field)) {
-                        std::cerr << "Test 5 failed: /metrics missing field: " << field << '\n';
-                        result = 1;
-                        break;
-                    }
-                }
-            }
-        }
+  protected:
+    auto& chat_service() { return g_state->chat_service; }
+    auto& runtime() { return g_state->runtime; }
+    auto& client() { return g_state->client; }
+};
+
+TEST_F(HttpIntegrationTest, HealthzReturns200) {
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/healthz");
+    req->setMethod(drogon::Get);
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_EQ(resp->getStatusCode(), drogon::k200OK);
+}
+
+TEST_F(HttpIntegrationTest, ModelsWithoutAuthReturns401) {
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/v1/models");
+    req->setMethod(drogon::Get);
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_EQ(resp->getStatusCode(), drogon::k401Unauthorized);
+}
+
+TEST_F(HttpIntegrationTest, OversizedBodyReturns413) {
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/v1/chat/completions");
+    req->setMethod(drogon::Post);
+    req->addHeader("Authorization", "Bearer test-secret");
+    req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    std::string big_body(1024, 'x');
+    req->setBody(std::move(big_body));
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_EQ(resp->getStatusCode(), drogon::k413RequestEntityTooLarge);
+}
+
+TEST_F(HttpIntegrationTest, ValidCompletionReturns500FromFake) {
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/v1/chat/completions");
+    req->setMethod(drogon::Post);
+    req->addHeader("Authorization", "Bearer test-secret");
+    req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    nlohmann::json body = {
+        {"model", "integration-test-model"},
+        {"messages", {{{"role", "user"}, {"content", "hi"}}}},
+        {"stream", false}};
+    req->setBody(body.dump());
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_EQ(static_cast<int>(resp->getStatusCode()), 500);
+}
+
+TEST_F(HttpIntegrationTest, MetricsReturns200WithAllFields) {
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/metrics");
+    req->setMethod(drogon::Get);
+    req->addHeader("Authorization", "Bearer test-secret");
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_EQ(resp->getStatusCode(), drogon::k200OK);
+
+    auto json = nlohmann::json::parse(std::string(resp->body()), nullptr, false);
+    ASSERT_FALSE(json.is_discarded());
+
+    const char* required_fields[] = {"requests_total",
+                                     "requests_errors",
+                                     "requests_cancelled_total",
+                                     "requests_queue_rejected_total",
+                                     "stream_disconnects_total",
+                                     "tool_invocations_total",
+                                     "tool_failures_total",
+                                     "tool_timeouts_total",
+                                     "active_sessions",
+                                     "model_id",
+                                     "uptime_seconds"};
+    for (const auto* field : required_fields) {
+        EXPECT_TRUE(json.contains(field)) << "Missing field: " << field;
     }
+}
 
-    // Test 6: queue_full mode increments requests_queue_rejected_total
-    if (result == 0) {
-        auto before = read_metric(client, "requests_queue_rejected_total");
-        if (!before.has_value()) {
-            result = fail("Test 6 failed: could not read "
-                          "requests_queue_rejected_total before request.");
-        } else {
-            chat_service->set_mode(FakeCompletionMode::QueueFull);
+TEST_F(HttpIntegrationTest, QueueFullIncrementsMetric) {
+    auto before = read_metric(client(), "requests_queue_rejected_total");
+    ASSERT_TRUE(before.has_value());
 
-            auto req = drogon::HttpRequest::newHttpRequest();
-            req->setPath("/v1/chat/completions");
-            req->setMethod(drogon::Post);
-            req->addHeader("Authorization", "Bearer test-secret");
-            req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-            nlohmann::json body = {{"model", "integration-test-model"},
-                                   {"messages", {{{"role", "user"}, {"content", "hi"}}}},
-                                   {"stream", false}};
-            req->setBody(body.dump());
-            auto [status, resp] = client->sendRequest(req, 5.0);
-            if (status != drogon::ReqResult::Ok || !resp ||
-                resp->getStatusCode() != drogon::k503ServiceUnavailable) {
-                auto actual_code = resp ? static_cast<int>(resp->getStatusCode()) : -1;
-                std::cerr << "Test 6 failed: queue_full should return 503, got " << actual_code
-                          << '\n';
-                result = 1;
-            } else {
-                auto after = read_metric(client, "requests_queue_rejected_total");
-                if (!after.has_value()) {
-                    result = fail("Test 6 failed: could not read "
-                                  "requests_queue_rejected_total after request.");
-                } else if (*after <= *before) {
-                    std::cerr << "Test 6 failed: requests_queue_rejected_total did not "
-                                 "increment ("
-                              << *before << " -> " << *after << ")\n";
-                    result = 1;
-                }
-            }
-            chat_service->set_mode(FakeCompletionMode::ServerError);
-        }
-    }
+    chat_service()->set_mode(FakeCompletionMode::QueueFull);
 
-    // Test 7: cancelled completion increments requests_cancelled_total
-    if (result == 0) {
-        auto before = read_metric(client, "requests_cancelled_total");
-        if (!before.has_value()) {
-            result = fail("Test 7 failed: could not read requests_cancelled_total "
-                          "before request.");
-        } else {
-            chat_service->set_mode(FakeCompletionMode::Cancelled);
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/v1/chat/completions");
+    req->setMethod(drogon::Post);
+    req->addHeader("Authorization", "Bearer test-secret");
+    req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    nlohmann::json body = {{"model", "integration-test-model"},
+                           {"messages", {{{"role", "user"}, {"content", "hi"}}}},
+                           {"stream", false}};
+    req->setBody(body.dump());
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_EQ(resp->getStatusCode(), drogon::k503ServiceUnavailable);
 
-            auto req = drogon::HttpRequest::newHttpRequest();
-            req->setPath("/v1/chat/completions");
-            req->setMethod(drogon::Post);
-            req->addHeader("Authorization", "Bearer test-secret");
-            req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-            nlohmann::json body = {{"model", "integration-test-model"},
-                                   {"messages", {{{"role", "user"}, {"content", "hi"}}}},
-                                   {"stream", false}};
-            req->setBody(body.dump());
-            auto [status, resp] = client->sendRequest(req, 5.0);
-            if (status != drogon::ReqResult::Ok || !resp) {
-                result = fail("Test 7 failed: cancelled completion request should get "
-                              "a response.");
-            } else {
-                auto after = read_metric(client, "requests_cancelled_total");
-                if (!after.has_value()) {
-                    result = fail("Test 7 failed: could not read "
-                                  "requests_cancelled_total after request.");
-                } else if (*after <= *before) {
-                    std::cerr << "Test 7 failed: requests_cancelled_total did not increment ("
-                              << *before << " -> " << *after << ")\n";
-                    result = 1;
-                }
-            }
-            chat_service->set_mode(FakeCompletionMode::ServerError);
-        }
-    }
+    auto after = read_metric(client(), "requests_queue_rejected_total");
+    ASSERT_TRUE(after.has_value());
+    EXPECT_GT(*after, *before);
 
-    // Test 8: stream_disconnects_total increment path
-    //
-    // On non-Linux platforms, Drogon's ListenerManager does not propagate
-    // setConnectionCallback to HttpServer instances, so TCP-level disconnect
-    // detection does not work. We verify the counter path directly: the
-    // DisconnectRegistry callback (when fired) increments the metric via
-    // runtime->metrics().increment_stream_disconnects(). We test this by
-    // calling increment_stream_disconnects() and verifying /metrics reflects it.
-    if (result == 0) {
-        auto before = read_metric(client, "stream_disconnects_total");
-        if (!before.has_value()) {
-            result = fail("Test 8 failed: could not read stream_disconnects_total "
-                          "before increment.");
-        } else {
-            runtime->metrics().increment_stream_disconnects();
-            auto after = read_metric(client, "stream_disconnects_total");
-            if (!after.has_value()) {
-                result = fail("Test 8 failed: could not read stream_disconnects_total "
-                              "after increment.");
-            } else if (*after != *before + 1) {
-                std::cerr << "Test 8 failed: stream_disconnects_total did not increment ("
-                          << *before << " -> " << *after << ")\n";
-                result = 1;
-            }
-        }
-    }
+    chat_service()->set_mode(FakeCompletionMode::ServerError);
+}
 
-    // Test 9: GET /v1/tools returns registered tool metadata
-    if (result == 0) {
-        chat_service->set_tools({zks::server::ToolDefinition{
-            "echo",
-            "Echoes the input back",
-            nlohmann::json{{"type", "object"},
-                           {"properties", {{"input", {{"type", "string"}}}}},
-                           {"required", {"input"}}},
-        }});
+TEST_F(HttpIntegrationTest, CancelledCompletionIncrementsMetric) {
+    auto before = read_metric(client(), "requests_cancelled_total");
+    ASSERT_TRUE(before.has_value());
 
-        auto req = drogon::HttpRequest::newHttpRequest();
-        req->setPath("/v1/tools");
-        req->setMethod(drogon::Get);
-        req->addHeader("Authorization", "Bearer test-secret");
-        auto [status, resp] = client->sendRequest(req, 5.0);
-        if (status != drogon::ReqResult::Ok || !resp ||
-            resp->getStatusCode() != drogon::k200OK) {
-            result = fail("Test 9 failed: GET /v1/tools should return 200.");
-        } else {
-            auto json = nlohmann::json::parse(std::string(resp->body()), nullptr, false);
-            if (json.is_discarded() || !json.contains("data") || !json["data"].is_array()) {
-                result = fail("Test 9 failed: /v1/tools response should have a data array.");
-            } else if (json["data"].size() != 1) {
-                std::cerr << "Test 9 failed: expected 1 tool, got " << json["data"].size() << '\n';
-                result = 1;
-            } else {
-                auto& tool = json["data"][0];
-                if (!tool.contains("function") || tool["function"]["name"] != "echo") {
-                    result = fail("Test 9 failed: tool name should be 'echo'.");
-                }
-            }
-        }
-    }
+    chat_service()->set_mode(FakeCompletionMode::Cancelled);
 
-    // Test 10: successful completion with tool invocations increments tool metrics
-    if (result == 0) {
-        auto before_invocations = read_metric(client, "tool_invocations_total");
-        auto before_failures = read_metric(client, "tool_failures_total");
-        auto before_timeouts = read_metric(client, "tool_timeouts_total");
-        if (!before_invocations.has_value() || !before_failures.has_value() ||
-            !before_timeouts.has_value()) {
-            result = fail("Test 10 failed: could not read tool metrics before request.");
-        } else {
-            zks::server::CompletionResult response;
-            response.text = "tool result";
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/v1/chat/completions");
+    req->setMethod(drogon::Post);
+    req->addHeader("Authorization", "Bearer test-secret");
+    req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    nlohmann::json body = {{"model", "integration-test-model"},
+                           {"messages", {{{"role", "user"}, {"content", "hi"}}}},
+                           {"stream", false}};
+    req->setBody(body.dump());
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
 
-            zks::server::ToolInvocationRecord succeeded;
-            succeeded.id = "call-1";
-            succeeded.name = "echo";
-            succeeded.arguments_json = R"({"input":"hi"})";
-            succeeded.status = zks::server::ToolInvocationStatus::Succeeded;
-            succeeded.result_json = R"({"output":"hi"})";
-            response.tool_invocations.push_back(std::move(succeeded));
+    auto after = read_metric(client(), "requests_cancelled_total");
+    ASSERT_TRUE(after.has_value());
+    EXPECT_GT(*after, *before);
 
-            zks::server::ToolInvocationRecord timed_out;
-            timed_out.id = "call-2";
-            timed_out.name = "echo";
-            timed_out.arguments_json = R"({"input":"slow"})";
-            timed_out.status = zks::server::ToolInvocationStatus::ExecutionFailed;
-            timed_out.error = zks::server::RuntimeError{
-                zks::server::RuntimeErrorCode::ToolExecutionFailed,
-                "Tool command timed out after 10 ms",
-                "timeout",
-            };
-            response.tool_invocations.push_back(std::move(timed_out));
+    chat_service()->set_mode(FakeCompletionMode::ServerError);
+}
 
-            chat_service->set_response(std::move(response));
-            chat_service->set_mode(FakeCompletionMode::Success);
+TEST_F(HttpIntegrationTest, StreamDisconnectsIncrementPath) {
+    auto before = read_metric(client(), "stream_disconnects_total");
+    ASSERT_TRUE(before.has_value());
 
-            auto req = drogon::HttpRequest::newHttpRequest();
-            req->setPath("/v1/chat/completions");
-            req->setMethod(drogon::Post);
-            req->addHeader("Authorization", "Bearer test-secret");
-            req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-            nlohmann::json body = {{"model", "integration-test-model"},
-                                   {"messages", {{{"role", "user"}, {"content", "hi"}}}},
-                                   {"stream", false}};
-            req->setBody(body.dump());
-            auto [status, resp] = client->sendRequest(req, 5.0);
-            if (status != drogon::ReqResult::Ok || !resp ||
-                resp->getStatusCode() != drogon::k200OK) {
-                result = fail("Test 10 failed: successful completion request should return 200.");
-            } else {
-                auto after_invocations = read_metric(client, "tool_invocations_total");
-                auto after_failures = read_metric(client, "tool_failures_total");
-                auto after_timeouts = read_metric(client, "tool_timeouts_total");
-                if (!after_invocations.has_value() || !after_failures.has_value() ||
-                    !after_timeouts.has_value()) {
-                    result = fail("Test 10 failed: could not read tool metrics after request.");
-                } else if (*after_invocations != *before_invocations + 2 ||
-                           *after_failures != *before_failures + 1 ||
-                           *after_timeouts != *before_timeouts + 1) {
-                    std::cerr << "Test 10 failed: unexpected tool metric deltas ("
-                              << *before_invocations << "->" << *after_invocations << ", "
-                              << *before_failures << "->" << *after_failures << ", "
-                              << *before_timeouts << "->" << *after_timeouts << ")\n";
-                    result = 1;
-                }
-            }
+    runtime()->metrics().increment_stream_disconnects();
 
-            chat_service->set_mode(FakeCompletionMode::ServerError);
-        }
-    }
+    auto after = read_metric(client(), "stream_disconnects_total");
+    ASSERT_TRUE(after.has_value());
+    EXPECT_EQ(*after, *before + 1);
+}
 
-    // Shutdown
-    client.reset();
-    drogon::app().quit();
-    server_thread.join();
-    runtime->stop();
+TEST_F(HttpIntegrationTest, ToolsEndpointReturnsMetadata) {
+    chat_service()->set_tools({zks::server::ToolDefinition{
+        "echo",
+        "Echoes the input back",
+        nlohmann::json{{"type", "object"},
+                       {"properties", {{"input", {{"type", "string"}}}}},
+                       {"required", {"input"}}},
+    }});
 
-    return result;
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/v1/tools");
+    req->setMethod(drogon::Get);
+    req->addHeader("Authorization", "Bearer test-secret");
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_EQ(resp->getStatusCode(), drogon::k200OK);
+
+    auto json = nlohmann::json::parse(std::string(resp->body()), nullptr, false);
+    ASSERT_FALSE(json.is_discarded());
+    ASSERT_TRUE(json.contains("data"));
+    ASSERT_TRUE(json["data"].is_array());
+    ASSERT_EQ(json["data"].size(), 1u);
+    EXPECT_EQ(json["data"][0]["function"]["name"], "echo");
+}
+
+TEST_F(HttpIntegrationTest, ToolInvocationsIncrementMetrics) {
+    auto before_invocations = read_metric(client(), "tool_invocations_total");
+    auto before_failures = read_metric(client(), "tool_failures_total");
+    auto before_timeouts = read_metric(client(), "tool_timeouts_total");
+    ASSERT_TRUE(before_invocations.has_value());
+    ASSERT_TRUE(before_failures.has_value());
+    ASSERT_TRUE(before_timeouts.has_value());
+
+    zks::server::CompletionResult response;
+    response.text = "tool result";
+
+    zks::server::ToolInvocationRecord succeeded;
+    succeeded.id = "call-1";
+    succeeded.name = "echo";
+    succeeded.arguments_json = R"({"input":"hi"})";
+    succeeded.status = zks::server::ToolInvocationStatus::Succeeded;
+    succeeded.result_json = R"({"output":"hi"})";
+    response.tool_invocations.push_back(std::move(succeeded));
+
+    zks::server::ToolInvocationRecord timed_out;
+    timed_out.id = "call-2";
+    timed_out.name = "echo";
+    timed_out.arguments_json = R"({"input":"slow"})";
+    timed_out.status = zks::server::ToolInvocationStatus::ExecutionFailed;
+    timed_out.error = zks::server::RuntimeError{
+        zks::server::RuntimeErrorCode::ToolExecutionFailed,
+        "Tool command timed out after 10 ms",
+        "timeout",
+    };
+    response.tool_invocations.push_back(std::move(timed_out));
+
+    chat_service()->set_response(std::move(response));
+    chat_service()->set_mode(FakeCompletionMode::Success);
+
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/v1/chat/completions");
+    req->setMethod(drogon::Post);
+    req->addHeader("Authorization", "Bearer test-secret");
+    req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    nlohmann::json body = {{"model", "integration-test-model"},
+                           {"messages", {{{"role", "user"}, {"content", "hi"}}}},
+                           {"stream", false}};
+    req->setBody(body.dump());
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_EQ(resp->getStatusCode(), drogon::k200OK);
+
+    auto after_invocations = read_metric(client(), "tool_invocations_total");
+    auto after_failures = read_metric(client(), "tool_failures_total");
+    auto after_timeouts = read_metric(client(), "tool_timeouts_total");
+    ASSERT_TRUE(after_invocations.has_value());
+    ASSERT_TRUE(after_failures.has_value());
+    ASSERT_TRUE(after_timeouts.has_value());
+    EXPECT_EQ(*after_invocations, *before_invocations + 2);
+    EXPECT_EQ(*after_failures, *before_failures + 1);
+    EXPECT_EQ(*after_timeouts, *before_timeouts + 1);
+
+    chat_service()->set_mode(FakeCompletionMode::ServerError);
+}
+
+TEST_F(HttpIntegrationTest, StreamingSseSuccess) {
+    chat_service()->set_mode(FakeCompletionMode::StreamingSuccess);
+    auto latch = chat_service()->finish_latch();
+
+    std::thread signal_thread([latch] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        latch->signal();
+    });
+
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/v1/chat/completions");
+    req->setMethod(drogon::Post);
+    req->addHeader("Authorization", "Bearer test-secret");
+    req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    nlohmann::json body = {{"model", "integration-test-model"},
+                           {"messages", {{{"role", "user"}, {"content", "hi"}}}},
+                           {"stream", true}};
+    req->setBody(body.dump());
+    auto [status, resp] = client()->sendRequest(req, 10.0);
+    signal_thread.join();
+
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+
+    auto content_type = std::string(resp->contentTypeString());
+    EXPECT_NE(content_type.find("text/event-stream"), std::string::npos);
+
+    std::string resp_body(resp->body());
+    EXPECT_NE(resp_body.find("\"role\":\"assistant\""), std::string::npos);
+    EXPECT_NE(resp_body.find("hello "), std::string::npos);
+    EXPECT_NE(resp_body.find("world"), std::string::npos);
+    EXPECT_NE(resp_body.find("\"finish_reason\":\"stop\""), std::string::npos);
+    EXPECT_NE(resp_body.find("data: [DONE]"), std::string::npos);
+
+    chat_service()->set_mode(FakeCompletionMode::ServerError);
+}
+
+TEST_F(HttpIntegrationTest, StreamingQueueFullReturns503) {
+    chat_service()->set_mode(FakeCompletionMode::QueueFull);
+
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/v1/chat/completions");
+    req->setMethod(drogon::Post);
+    req->addHeader("Authorization", "Bearer test-secret");
+    req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    nlohmann::json body = {{"model", "integration-test-model"},
+                           {"messages", {{{"role", "user"}, {"content", "hi"}}}},
+                           {"stream", true}};
+    req->setBody(body.dump());
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_EQ(resp->getStatusCode(), drogon::k503ServiceUnavailable);
+
+    chat_service()->set_mode(FakeCompletionMode::ServerError);
 }
