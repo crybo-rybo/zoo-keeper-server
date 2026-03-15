@@ -133,49 +133,71 @@ class StreamingSession {
             return;
         }
 
+        DeferredActions deferred;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!metadata_ready_) {
                 pending_tokens_.emplace_back(token);
                 return;
             }
-        }
 
-        push_frame(make_chat_completion_chunk(completion_id_, created_, model_id_, token,
-                                              !sent_role_.load(std::memory_order_acquire),
-                                              std::nullopt));
-        sent_role_.store(true, std::memory_order_release);
-        sent_content_.store(true, std::memory_order_release);
+            auto frame = make_chat_completion_chunk(completion_id_, created_, model_id_, token,
+                                                    !sent_role_, std::nullopt);
+            sent_role_ = true;
+            sent_content_ = true;
+            deferred = push_frame_locked(std::move(frame));
+        }
+        execute_deferred(deferred);
+        if (deferred.should_close) {
+            close();
+        }
     }
 
     void finish_success(const CompletionResult& response) {
-        if (!sent_role_.load(std::memory_order_acquire)) {
-            if (response.text.empty()) {
-                push_frame(make_chat_completion_chunk(completion_id_, created_, model_id_,
-                                                      std::nullopt, true, std::nullopt));
-            } else {
-                push_frame(make_chat_completion_chunk(completion_id_, created_, model_id_,
-                                                      response.text, true, std::nullopt));
-                sent_content_.store(true, std::memory_order_release);
+        std::vector<DeferredActions> all_deferred;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            if (!sent_role_) {
+                if (response.text.empty()) {
+                    all_deferred.push_back(push_frame_locked(
+                        make_chat_completion_chunk(completion_id_, created_, model_id_,
+                                                   std::nullopt, true, std::nullopt)));
+                } else {
+                    all_deferred.push_back(push_frame_locked(
+                        make_chat_completion_chunk(completion_id_, created_, model_id_,
+                                                   response.text, true, std::nullopt)));
+                    sent_content_ = true;
+                }
+                sent_role_ = true;
+            } else if (!sent_content_ && !response.text.empty()) {
+                all_deferred.push_back(push_frame_locked(
+                    make_chat_completion_chunk(completion_id_, created_, model_id_,
+                                               response.text, false, std::nullopt)));
+                sent_content_ = true;
             }
-            sent_role_.store(true, std::memory_order_release);
-        } else if (!sent_content_.load(std::memory_order_acquire) && !response.text.empty()) {
-            push_frame(make_chat_completion_chunk(completion_id_, created_, model_id_,
-                                                  response.text, false, std::nullopt));
-            sent_content_.store(true, std::memory_order_release);
+
+            all_deferred.push_back(push_frame_locked(
+                make_chat_completion_chunk(completion_id_, created_, model_id_, std::nullopt,
+                                           false, "stop")));
+            all_deferred.push_back(push_frame_locked(make_sse_done()));
         }
 
-        push_frame(make_chat_completion_chunk(completion_id_, created_, model_id_, std::nullopt,
-                                              false, "stop"));
-        push_frame(make_sse_done());
+        for (const auto& d : all_deferred) {
+            execute_deferred(d);
+        }
         close();
     }
 
     void finish_error(const ApiError& error) {
-        if (!sent_content_.load(std::memory_order_acquire) &&
-            !sent_role_.load(std::memory_order_acquire)) {
-            push_frame(make_sse_data(make_error_body(error)));
+        DeferredActions deferred;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!sent_content_ && !sent_role_) {
+                deferred = push_frame_locked(make_sse_data(make_error_body(error)));
+            }
         }
+        execute_deferred(deferred);
         close();
     }
 
@@ -199,33 +221,34 @@ class StreamingSession {
     }
 
   private:
-    void push_frame(std::string frame) {
-        std::function<void()> cancel_callback;
+    struct DeferredActions {
         bool should_close = false;
+        std::function<void()> cancel_cb;
+    };
 
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (closing_) {
-                return;
-            }
-
-            if (!stream_) {
-                buffered_frames_.push_back(std::move(frame));
-                return;
-            }
-
-            if (!stream_->send(frame)) {
-                closing_ = true;
-                should_close = true;
-                cancel_callback = cancel_callback_;
-            }
+    // Must be called with mutex_ held.
+    DeferredActions push_frame_locked(std::string frame) {
+        DeferredActions actions;
+        if (closing_) {
+            return actions;
         }
 
-        if (cancel_callback) {
-            cancel_callback();
+        if (!stream_) {
+            buffered_frames_.push_back(std::move(frame));
+            return actions;
         }
-        if (should_close) {
-            close();
+
+        if (!stream_->send(frame)) {
+            closing_ = true;
+            actions.should_close = true;
+            actions.cancel_cb = cancel_callback_;
+        }
+        return actions;
+    }
+
+    static void execute_deferred(const DeferredActions& actions) {
+        if (actions.cancel_cb) {
+            actions.cancel_cb();
         }
     }
 
@@ -239,8 +262,8 @@ class StreamingSession {
     std::vector<std::string> pending_tokens_;
     std::function<void()> cancel_callback_;
     bool closing_ = false;
-    std::atomic<bool> sent_role_{false};
-    std::atomic<bool> sent_content_{false};
+    bool sent_role_ = false;
+    bool sent_content_ = false;
 };
 
 drogon::HttpResponsePtr make_stream_response(const std::shared_ptr<StreamingSession>& session) {
