@@ -18,6 +18,8 @@
 namespace zks::server {
 namespace {
 
+// NOTE: with_metrics() is duplicated in api_routes.cpp. Both are in anonymous
+// namespaces. A shared internal header would eliminate the duplication.
 std::function<void(const drogon::HttpResponsePtr&)>
 with_metrics(std::shared_ptr<ServerRuntime> runtime,
              std::function<void(const drogon::HttpResponsePtr&)> callback) {
@@ -304,11 +306,19 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
         return;
     }
 
+    // Capture only the session_id (for logging) rather than copying the entire
+    // ChatCompletionRequest which includes the full message vector.
     auto submit_result = runtime->submit_background(
-        [callback = std::move(callback), pending = std::move(*pending), request,
+        [callback = std::move(callback), pending = std::move(*pending),
+         session_id = request.session_id, is_stream = request.stream,
          runtime]() mutable {
+            // Reconstruct a minimal request-like view for logging
+            ChatCompletionRequest log_request;
+            log_request.session_id = std::move(session_id);
+            log_request.stream = is_stream;
+
             auto result = pending.handle.get();
-            log_request_result(pending, request, result);
+            log_request_result(pending, log_request, result);
             if (!result) {
                 increment_runtime_error_metrics(runtime->metrics(), result.error());
                 finalize_completion(pending, result);
@@ -378,11 +388,17 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
             });
     }
 
+    // Capture only the fields needed for logging, not the full completion_request.
     auto submit_result = runtime->submit_background(
         [session, weak_connection, callback_id, disconnect_registry, pending = std::move(*pending),
-         completion_request, runtime]() mutable {
+         session_id = completion_request.session_id, is_stream = completion_request.stream,
+         runtime]() mutable {
+            ChatCompletionRequest log_request;
+            log_request.session_id = std::move(session_id);
+            log_request.stream = is_stream;
+
             auto result = pending.handle.get();
-            log_request_result(pending, completion_request, result);
+            log_request_result(pending, log_request, result);
             if (callback_id.has_value()) {
                 if (auto connection = weak_connection.lock()) {
                     disconnect_registry->clear(connection, *callback_id);

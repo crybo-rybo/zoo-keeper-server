@@ -33,10 +33,6 @@ zoo::Role to_zoo_role(MessageRole role) noexcept {
 }
 
 ChatMessage from_zoo_message(const zoo::Message& message) {
-    if (message.role == zoo::Role::Tool) {
-        return ChatMessage::tool(message.content, message.tool_call_id.value_or(""));
-    }
-
     switch (message.role) {
     case zoo::Role::System:
         return ChatMessage::system(message.content);

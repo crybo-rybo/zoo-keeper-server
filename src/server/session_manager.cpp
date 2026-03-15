@@ -208,7 +208,7 @@ ApiResult<SessionSummary> SessionManager::get_session(std::string_view session_i
     {
         std::lock_guard<std::mutex> lock(mutex_);
         reap_expired_sessions_locked(now_seconds(), expired);
-        auto it = sessions_.find(std::string(session_id));
+        auto it = sessions_.find(session_id);
         if (it == sessions_.end()) {
             return std::unexpected(
                 not_found_error("Unknown session: " + std::string(session_id), "session_not_found"));
@@ -231,7 +231,7 @@ ApiResult<void> SessionManager::delete_session(std::string_view session_id) {
     std::shared_ptr<SessionState> session;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        auto it = sessions_.find(std::string(session_id));
+        auto it = sessions_.find(session_id);
         if (it == sessions_.end()) {
             return std::unexpected(
                 not_found_error("Unknown session: " + std::string(session_id), "session_not_found"));
@@ -305,7 +305,8 @@ ApiResult<PendingChatCompletion> SessionManager::start_completion(
                 conflict_error("Session already has an active request", "session_busy"));
         }
 
-        full_messages = session->history;
+        full_messages.reserve(session->history.size() + 1);
+        full_messages.insert(full_messages.end(), session->history.begin(), session->history.end());
         full_messages.push_back(user_message);
         handle = completion_starter_(std::move(full_messages), std::move(callback));
         session->active_request = handle.id;

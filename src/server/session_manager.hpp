@@ -14,6 +14,22 @@
 #include <string_view>
 #include <unordered_map>
 
+// Transparent hash and equality for std::unordered_map<std::string, ...> that
+// allows lookup by std::string_view without allocating a temporary std::string.
+struct TransparentStringHash {
+    using is_transparent = void;
+    size_t operator()(std::string_view sv) const noexcept {
+        return std::hash<std::string_view>{}(sv);
+    }
+};
+
+struct TransparentStringEqual {
+    using is_transparent = void;
+    bool operator()(std::string_view a, std::string_view b) const noexcept {
+        return a == b;
+    }
+};
+
 namespace zks::server {
 
 class SessionManager {
@@ -79,7 +95,9 @@ class SessionManager {
     RequestCanceler request_canceler_;
     std::atomic<std::uint64_t> next_session_id_{1};
     mutable std::mutex mutex_;
-    std::unordered_map<std::string, std::shared_ptr<SessionState>> sessions_;
+    std::unordered_map<std::string, std::shared_ptr<SessionState>,
+                       TransparentStringHash, TransparentStringEqual>
+        sessions_;
     bool stopping_ = false;
 };
 

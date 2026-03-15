@@ -18,8 +18,13 @@ namespace zks::server {
         return std::nullopt;
     }
 
-    const auto auth_header = request->getHeader("Authorization");
-    if (auth_header != "Bearer " + *config.api_key) {
+    const auto& auth_header = request->getHeader("Authorization");
+    // Avoid allocating "Bearer " + key on every request. Instead, check prefix
+    // and compare the suffix against the configured key in-place.
+    constexpr std::string_view kBearerPrefix = "Bearer ";
+    if (auth_header.size() != kBearerPrefix.size() + config.api_key->size() ||
+        auth_header.compare(0, kBearerPrefix.size(), kBearerPrefix.data(), kBearerPrefix.size()) != 0 ||
+        auth_header.compare(kBearerPrefix.size(), std::string::npos, *config.api_key) != 0) {
         return auth_error("Invalid API key", "invalid_api_key");
     }
 
