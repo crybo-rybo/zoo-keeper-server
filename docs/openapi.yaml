@@ -1,0 +1,469 @@
+openapi: 3.1.0
+info:
+  title: Zoo Keeper Server
+  description: Local LLM inference server with an OpenAI-compatible subset REST API.
+  version: 0.0.1
+  license:
+    name: MIT
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local server
+
+security:
+  - BearerAuth: []
+  - {}
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Optional. Set `api_key` in server config to require this on all
+        non-`/healthz` endpoints.
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            param:
+              type: string
+              nullable: true
+            code:
+              type: string
+              nullable: true
+
+    SessionSummary:
+      type: object
+      required: [id, model, created, last_used, expires_at]
+      properties:
+        id:
+          type: string
+        model:
+          type: string
+        created:
+          type: integer
+          format: int64
+        last_used:
+          type: integer
+          format: int64
+        expires_at:
+          type: integer
+          format: int64
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          type: string
+        tool_call_id:
+          type: string
+
+    ToolDefinition:
+      type: object
+      required: [name, description, parameters]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        parameters:
+          type: object
+          description: JSON Schema object describing the tool parameters.
+
+    CompletionUsage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+          format: int64
+        completion_tokens:
+          type: integer
+          format: int64
+        total_tokens:
+          type: integer
+          format: int64
+
+    ToolInvocationRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        arguments_json:
+          type: string
+        status:
+          type: string
+          enum: [succeeded, validation_failed, execution_failed]
+        result_json:
+          type: string
+          nullable: true
+
+    ZooMetrics:
+      type: object
+      properties:
+        latency_ms:
+          type: integer
+          format: int64
+        time_to_first_token_ms:
+          type: integer
+          format: int64
+        tokens_per_second:
+          type: number
+
+    ServerMetrics:
+      type: object
+      properties:
+        requests_total:
+          type: integer
+          format: int64
+        requests_errors:
+          type: integer
+          format: int64
+        requests_cancelled_total:
+          type: integer
+          format: int64
+        requests_queue_rejected_total:
+          type: integer
+          format: int64
+        stream_disconnects_total:
+          type: integer
+          format: int64
+        tool_invocations_total:
+          type: integer
+          format: int64
+        tool_failures_total:
+          type: integer
+          format: int64
+        tool_timeouts_total:
+          type: integer
+          format: int64
+        active_sessions:
+          type: integer
+          format: int64
+        model_id:
+          type: string
+        uptime_seconds:
+          type: integer
+          format: int64
+
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      summary: Server health check
+      security: []
+      description: Returns 200 when the model is loaded and ready, 503 otherwise.
+      responses:
+        "200":
+          description: Server is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                  ready:
+                    type: boolean
+                  version:
+                    type: string
+                    description: Server version (e.g. "0.0.1"). Added in step 6.2.
+                  model:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                  sessions:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      active:
+                        type: integer
+                      max_sessions:
+                        type: integer
+                      idle_ttl_seconds:
+                        type: integer
+        "503":
+          description: Server is starting or unhealthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [starting]
+                  ready:
+                    type: boolean
+
+  /v1/models:
+    get:
+      operationId: listModels
+      summary: List available models
+      description: Returns the configured model_id in OpenAI list format.
+      responses:
+        "200":
+          description: Model list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object:
+                    type: string
+                    enum: [list]
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        object:
+                          type: string
+                          enum: [model]
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/tools:
+    get:
+      operationId: listTools
+      summary: List server-owned tools
+      responses:
+        "200":
+          description: Tool catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object:
+                    type: string
+                    enum: [list]
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum: [function]
+                        function:
+                          $ref: "#/components/schemas/ToolDefinition"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sessions:
+    post:
+      operationId: createSession
+      summary: Create a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model]
+              properties:
+                model:
+                  type: string
+                system_prompt:
+                  type: string
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionSummary"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Sessions disabled or at capacity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      operationId: getSession
+      summary: Get session metadata
+      responses:
+        "200":
+          description: Session found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionSummary"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      operationId: deleteSession
+      summary: Delete a session
+      responses:
+        "204":
+          description: Session deleted
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      summary: Create a chat completion
+      description: >
+        OpenAI-compatible subset. Supports `stream: true` for SSE streaming.
+        Accepted top-level fields: `model`, `messages`, `stream`, `session_id`.
+        Unknown fields return 400 with `error.code = "unknown_field"`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages]
+              properties:
+                model:
+                  type: string
+                messages:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ChatMessage"
+                stream:
+                  type: boolean
+                  default: false
+                session_id:
+                  type: string
+                  description: >
+                    Associate with a server-owned session. When present, `messages`
+                    must contain exactly one new user message.
+      responses:
+        "200":
+          description: Completion result (non-streaming) or SSE stream (streaming)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  object:
+                    type: string
+                    enum: [chat.completion]
+                  created:
+                    type: integer
+                    format: int64
+                  model:
+                    type: string
+                  choices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        index:
+                          type: integer
+                        message:
+                          $ref: "#/components/schemas/ChatMessage"
+                        finish_reason:
+                          type: string
+                  usage:
+                    $ref: "#/components/schemas/CompletionUsage"
+                  tool_invocations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ToolInvocationRecord"
+                  zoo_metrics:
+                    $ref: "#/components/schemas/ZooMetrics"
+            text/event-stream:
+              schema:
+                type: string
+                description: >
+                  SSE stream. Each event is `data: <json>`. Final event is `data: [DONE]`.
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Service unavailable (queue full or model not ready)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Server metrics snapshot
+      responses:
+        "200":
+          description: Metrics snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerMetrics"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"

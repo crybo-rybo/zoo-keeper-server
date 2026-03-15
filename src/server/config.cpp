@@ -124,9 +124,9 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
             }
         }
         if (auto it = json.find("http"); it != json.end()) {
-            static constexpr std::array<std::string_view, 3> kAllowedHttpKeys = {
+            static constexpr std::array<std::string_view, 4> kAllowedHttpKeys = {
                 "client_max_body_size_bytes", "client_max_memory_body_size_bytes",
-                "idle_connection_timeout_seconds"};
+                "idle_connection_timeout_seconds", "cors_allow_origins"};
             if (auto unknown_keys =
                     reject_unknown_keys(*it, "http config", kAllowedHttpKeys);
                 !unknown_keys) {
@@ -143,6 +143,19 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
             if (auto http_it = it->find("idle_connection_timeout_seconds");
                 http_it != it->end()) {
                 http_it->get_to(config.http.idle_connection_timeout_seconds);
+            }
+            if (auto http_it = it->find("cors_allow_origins"); http_it != it->end()) {
+                if (!http_it->is_array()) {
+                    return std::unexpected(
+                        with_path_context(path, "http.cors_allow_origins must be an array"));
+                }
+                for (const auto& origin : *http_it) {
+                    if (!origin.is_string()) {
+                        return std::unexpected(with_path_context(
+                            path, "http.cors_allow_origins entries must be strings"));
+                    }
+                    config.http.cors_allow_origins.push_back(origin.get<std::string>());
+                }
             }
         }
         if (auto it = json.find("sessions"); it != json.end()) {

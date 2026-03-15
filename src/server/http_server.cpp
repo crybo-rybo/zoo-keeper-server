@@ -38,6 +38,28 @@ int HttpServer::run() {
     std::clog << "zoo-keeper-server listening on " << config.bind_address << ":" << config.port
               << '\n';
 
+    if (!config.http.cors_allow_origins.empty()) {
+        const auto cors_origins = config.http.cors_allow_origins;
+        app.registerPostHandlingAdvice(
+            [cors_origins](const drogon::HttpRequestPtr& req,
+                           const drogon::HttpResponsePtr& resp) {
+                const auto origin = req->getHeader("Origin");
+                if (origin.empty()) {
+                    return;
+                }
+                for (const auto& allowed : cors_origins) {
+                    if (allowed == "*") {
+                        resp->addHeader("Access-Control-Allow-Origin", "*");
+                        return;
+                    }
+                    if (allowed == origin) {
+                        resp->addHeader("Access-Control-Allow-Origin", origin);
+                        return;
+                    }
+                }
+            });
+    }
+
     app.addListener(config.bind_address, config.port)
         .setClientMaxBodySize(static_cast<size_t>(config.http.client_max_body_size_bytes))
         .setClientMaxMemoryBodySize(

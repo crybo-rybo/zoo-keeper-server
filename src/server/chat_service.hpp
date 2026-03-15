@@ -30,6 +30,10 @@ struct ToolProvider {
     std::vector<RegisteredTool> tools;
 };
 
+/// Abstract interface for the chat completion service.
+///
+/// All methods are safe to call from Drogon I/O threads.
+/// One shared agent backs all requests; sessions are managed externally via SessionManager.
 class ChatService {
   public:
     virtual ~ChatService() = default;
@@ -39,6 +43,8 @@ class ChatService {
     [[nodiscard]] virtual const std::vector<ToolDefinition>& tools() const noexcept = 0;
     [[nodiscard]] virtual SessionHealth session_health() const noexcept = 0;
 
+    /// Begins a chat completion. Returns `ApiError` with `queue_full` code when the
+    /// bounded continuation executor is saturated.
     virtual ApiResult<PendingChatCompletion> start_completion(
         const ChatCompletionRequest& request,
         std::optional<TokenCallback> callback = std::nullopt) = 0;
@@ -52,6 +58,10 @@ class ChatService {
     virtual void stop() = 0;
 };
 
+/// Concrete ChatService backed by a single shared `zoo::Agent`.
+///
+/// `create()` validates config and loads the model synchronously; it blocks until
+/// the model is in memory. All public methods are thread-safe.
 class ZooChatService final : public ChatService {
   public:
     static Result<std::shared_ptr<ZooChatService>> create(const ServerConfig& config);

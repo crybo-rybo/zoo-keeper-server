@@ -114,6 +114,13 @@ class FakeChatService final : public zks::server::ChatService {
         return {};
     }
 
+    ~FakeChatService() {
+        finish_latch_->signal();
+        if (streaming_thread_.joinable()) {
+            streaming_thread_.join();
+        }
+    }
+
     zks::server::ApiResult<zks::server::PendingChatCompletion> start_completion(
         const zks::server::ChatCompletionRequest&,
         std::optional<zks::server::TokenCallback> callback = std::nullopt) override {
@@ -168,8 +175,8 @@ class FakeChatService final : public zks::server::ChatService {
             std::promise<zks::server::RuntimeResult<zks::server::CompletionResult>> promise;
             auto future = promise.get_future();
 
-            std::thread([cb = std::move(callback), latch = std::move(latch),
-                         promise = std::move(promise)]() mutable {
+            streaming_thread_ = std::thread([cb = std::move(callback), latch = std::move(latch),
+                                             promise = std::move(promise)]() mutable {
                 if (cb.has_value()) {
                     (*cb)("hello ");
                     (*cb)("world");
@@ -180,7 +187,7 @@ class FakeChatService final : public zks::server::ChatService {
                 zks::server::CompletionResult response;
                 response.text = "hello world";
                 promise.set_value(std::move(response));
-            }).detach();
+            });
 
             zks::server::PendingChatCompletion pending;
             pending.id = "fake-stream-1";
@@ -250,4 +257,5 @@ class FakeChatService final : public zks::server::ChatService {
     std::atomic<bool> ready_{true};
     std::atomic<FakeCompletionMode> mode_{FakeCompletionMode::ServerError};
     std::shared_ptr<Latch> finish_latch_ = std::make_shared<Latch>();
+    std::thread streaming_thread_;
 };

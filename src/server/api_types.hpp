@@ -155,11 +155,13 @@ class CompletionSource {
     virtual RuntimeResult<CompletionResult> get() = 0;
 };
 
+/// Lightweight handle to an in-flight or completed async completion.
 struct CompletionHandle {
     std::uint64_t id = 0;
     std::shared_ptr<CompletionSource> source;
 
     [[nodiscard]] std::future_status wait_for(std::chrono::milliseconds timeout) const;
+    /// Consumes the result from the underlying source. May only be called once.
     RuntimeResult<CompletionResult> get();
 };
 
@@ -219,6 +221,8 @@ struct SessionHealth {
     std::uint32_t idle_ttl_seconds = 0;
 };
 
+/// RAII guard that invokes a cleanup callback exactly once, either on destruction or
+/// when `release()` is called explicitly, whichever comes first.
 class CompletionLease {
   public:
     explicit CompletionLease(std::function<void()> on_release = {})

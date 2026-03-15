@@ -419,3 +419,29 @@ TEST_F(HttpIntegrationTest, StreamingQueueFullReturns503) {
 
     chat_service()->set_mode(FakeCompletionMode::ServerError);
 }
+
+TEST_F(HttpIntegrationTest, CorsHeadersAbsentWhenUnconfigured) {
+    // The test server has no cors_allow_origins configured; no CORS headers should appear.
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/healthz");
+    req->setMethod(drogon::Get);
+    req->addHeader("Origin", "http://localhost:3000");
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_TRUE(resp->getHeader("Access-Control-Allow-Origin").empty());
+}
+
+TEST_F(HttpIntegrationTest, HealthzResponseIncludesVersion) {
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/healthz");
+    req->setMethod(drogon::Get);
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+
+    auto json = nlohmann::json::parse(std::string(resp->body()), nullptr, false);
+    ASSERT_FALSE(json.is_discarded());
+    EXPECT_TRUE(json.contains("version"));
+    EXPECT_FALSE(json.at("version").get<std::string>().empty());
+}

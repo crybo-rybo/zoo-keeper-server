@@ -7,6 +7,9 @@ endif()
 
 project(zoo-keeper-server VERSION 0.0.1 LANGUAGES CXX)
 
+configure_file(src/server/version.hpp.in
+               ${CMAKE_CURRENT_BINARY_DIR}/src/server/version.hpp @ONLY)
+
 include(CTest)
 include(FetchContent)
 
@@ -102,14 +105,36 @@ add_library(zks_server_core
     src/server/zoo_adapter.cpp
 )
 if(ZKS_ENABLE_TEST_UI)
+    find_program(ZKS_XXD xxd REQUIRED)
+    set(ZKS_TEST_UI_HTML ${CMAKE_CURRENT_SOURCE_DIR}/src/server/test_ui.html)
+    set(ZKS_TEST_UI_JS ${CMAKE_CURRENT_SOURCE_DIR}/src/server/test_ui.js)
+    set(ZKS_TEST_UI_HTML_CPP ${CMAKE_CURRENT_BINARY_DIR}/test_ui_html_content.cpp)
+    set(ZKS_TEST_UI_JS_CPP ${CMAKE_CURRENT_BINARY_DIR}/test_ui_js_content.cpp)
+
+    add_custom_command(
+        OUTPUT ${ZKS_TEST_UI_HTML_CPP}
+        COMMAND ${ZKS_XXD} -n kTestUiHtmlData -i ${ZKS_TEST_UI_HTML} > ${ZKS_TEST_UI_HTML_CPP}
+        DEPENDS ${ZKS_TEST_UI_HTML}
+        COMMENT "Embedding test_ui.html"
+    )
+    add_custom_command(
+        OUTPUT ${ZKS_TEST_UI_JS_CPP}
+        COMMAND ${ZKS_XXD} -n kTestUiJsData -i ${ZKS_TEST_UI_JS} > ${ZKS_TEST_UI_JS_CPP}
+        DEPENDS ${ZKS_TEST_UI_JS}
+        COMMENT "Embedding test_ui.js"
+    )
+
     target_sources(zks_server_core PRIVATE
         src/server/test_ui.cpp
+        ${ZKS_TEST_UI_HTML_CPP}
+        ${ZKS_TEST_UI_JS_CPP}
     )
     target_compile_definitions(zks_server_core PUBLIC ZKS_ENABLE_TEST_UI=1)
 endif()
 target_compile_features(zks_server_core PUBLIC cxx_std_23)
 target_include_directories(zks_server_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}/src
 )
 target_link_libraries(zks_server_core
     PUBLIC
@@ -226,3 +251,10 @@ if(BUILD_TESTING)
         )
     endif()
 endif()
+
+include(GNUInstallDirs)
+install(TARGETS zoo_keeper_server
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY config/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/zoo-keeper-server/config
+    FILES_MATCHING PATTERN "*.json")

@@ -1,10 +1,17 @@
 #include "server/config.hpp"
 #include "server/http_server.hpp"
 #include "server/runtime.hpp"
+#include "server/version.hpp"
 
 #include <iostream>
+#include <string_view>
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--version") {
+        std::cout << "zoo-keeper-server " << zks::kVersion << '\n';
+        return 0;
+    }
+
     if (argc != 2) {
         std::cerr << "Usage: zoo_keeper_server <config.json>" << '\n';
         return 1;
