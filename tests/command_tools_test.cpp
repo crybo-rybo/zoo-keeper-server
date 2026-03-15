@@ -114,8 +114,8 @@ int main(int argc, char** argv) {
             std::cerr << "Tool provider unexpectedly failed: " << provider.error() << '\n';
             return 1;
         }
-        if (provider->metadata.size() != 1 || provider->metadata[0].name != "helper" ||
-            provider->metadata[0].parameters_schema != tool.parameters_schema) {
+        if (provider->tools.size() != 1 || provider->tools[0].definition.name != "helper" ||
+            provider->tools[0].definition.parameters_schema != tool.parameters_schema) {
             return fail("Tool provider metadata did not match the tool config.");
         }
     }

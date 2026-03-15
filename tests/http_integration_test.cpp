@@ -17,8 +17,6 @@
 
 #include <drogon/drogon.h>
 #include <nlohmann/json.hpp>
-#include <zoo/tools/types.hpp>
-
 namespace {
 
 int fail(std::string_view message) {
@@ -61,8 +59,8 @@ int main() {
     auto runtime = std::make_shared<zks::server::ServerRuntime>(config, chat_service);
     auto disconnect_registry = std::make_shared<zks::server::DisconnectRegistry>();
 
-    zks::server::register_health_routes(runtime);
-    zks::server::register_api_routes(runtime, disconnect_registry);
+    zks::server::register_health_routes(drogon::app(), runtime);
+    zks::server::register_api_routes(drogon::app(), runtime, disconnect_registry);
 
     // Signal when the server loop starts
     std::mutex startup_mutex;
@@ -333,13 +331,13 @@ int main() {
 
     // Test 9: GET /v1/tools returns registered tool metadata
     if (result == 0) {
-        chat_service->set_tools({zoo::tools::ToolMetadata{
-            "echo", "Echoes the input back",
+        chat_service->set_tools({zks::server::ToolDefinition{
+            "echo",
+            "Echoes the input back",
             nlohmann::json{{"type", "object"},
                            {"properties", {{"input", {{"type", "string"}}}}},
                            {"required", {"input"}}},
-            {zoo::tools::ToolParameter{"input", zoo::tools::ToolValueType::String, true,
-                                       "The input to echo"}}}});
+        }});
 
         auto req = drogon::HttpRequest::newHttpRequest();
         req->setPath("/v1/tools");
@@ -374,26 +372,27 @@ int main() {
             !before_timeouts.has_value()) {
             result = fail("Test 10 failed: could not read tool metrics before request.");
         } else {
-            zoo::Response response;
+            zks::server::CompletionResult response;
             response.text = "tool result";
 
-            zoo::ToolInvocation succeeded;
+            zks::server::ToolInvocationRecord succeeded;
             succeeded.id = "call-1";
             succeeded.name = "echo";
             succeeded.arguments_json = R"({"input":"hi"})";
-            succeeded.status = zoo::ToolInvocationStatus::Succeeded;
+            succeeded.status = zks::server::ToolInvocationStatus::Succeeded;
             succeeded.result_json = R"({"output":"hi"})";
             response.tool_invocations.push_back(std::move(succeeded));
 
-            zoo::ToolInvocation timed_out;
+            zks::server::ToolInvocationRecord timed_out;
             timed_out.id = "call-2";
             timed_out.name = "echo";
             timed_out.arguments_json = R"({"input":"slow"})";
-            timed_out.status = zoo::ToolInvocationStatus::ExecutionFailed;
-            timed_out.error =
-                zoo::Error{zoo::ErrorCode::ToolExecutionFailed,
-                           "Tool command timed out after 10 ms",
-                           "timeout"};
+            timed_out.status = zks::server::ToolInvocationStatus::ExecutionFailed;
+            timed_out.error = zks::server::RuntimeError{
+                zks::server::RuntimeErrorCode::ToolExecutionFailed,
+                "Tool command timed out after 10 ms",
+                "timeout",
+            };
             response.tool_invocations.push_back(std::move(timed_out));
 
             chat_service->set_response(std::move(response));

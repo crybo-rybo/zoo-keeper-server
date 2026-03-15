@@ -6,7 +6,6 @@
 #include <string>
 
 #include <nlohmann/json.hpp>
-#include <zoo/tools/types.hpp>
 
 namespace {
 
@@ -30,8 +29,8 @@ int main() {
         }
         if (parsed->model != "local-model" || !parsed->stream || parsed->messages.size() != 2 ||
             parsed->session_id != std::optional<std::string>{"sess-1"} ||
-            parsed->messages[0].role != zoo::Role::System ||
-            parsed->messages[1].role != zoo::Role::User) {
+            parsed->messages[0].role != zks::server::MessageRole::System ||
+            parsed->messages[1].role != zks::server::MessageRole::User) {
             return fail("Valid chat completion request parsed with unexpected values.");
         }
     }
@@ -80,7 +79,7 @@ int main() {
     }
 
     {
-        zoo::tools::ToolMetadata tool;
+        zks::server::ToolDefinition tool;
         tool.name = "search_documents";
         tool.description = "Search local documents.";
         tool.parameters_schema = {{"type", "object"},
@@ -108,7 +107,7 @@ int main() {
     }
 
     {
-        zoo::Response response;
+        zks::server::CompletionResult response;
         response.text = "Hello from the server.";
         response.usage.prompt_tokens = 12;
         response.usage.completion_tokens = 4;
@@ -135,50 +134,56 @@ int main() {
     }
 
     {
-        const auto queue_full = zks::server::map_zoo_error_to_api_error(
-            zoo::Error{zoo::ErrorCode::QueueFull, "queue full"});
+        const auto queue_full = zks::server::map_runtime_error_to_api_error(
+            zks::server::RuntimeError{zks::server::RuntimeErrorCode::QueueFull, "queue full"});
         if (queue_full.http_status != 503 || queue_full.type != "service_unavailable_error" ||
             queue_full.code != std::optional<std::string>{"queue_full"}) {
             return fail("QueueFull error mapped incorrectly.");
         }
 
-        const auto invalid_sequence = zks::server::map_zoo_error_to_api_error(
-            zoo::Error{zoo::ErrorCode::InvalidMessageSequence, "bad sequence"});
+        const auto invalid_sequence = zks::server::map_runtime_error_to_api_error(
+            zks::server::RuntimeError{zks::server::RuntimeErrorCode::InvalidMessageSequence,
+                                      "bad sequence"});
         if (invalid_sequence.http_status != 400 ||
             invalid_sequence.type != "invalid_request_error") {
             return fail("InvalidMessageSequence error mapped incorrectly.");
         }
 
-        const auto model_load_failed = zks::server::map_zoo_error_to_api_error(
-            zoo::Error{zoo::ErrorCode::ModelLoadFailed, "model not found"});
+        const auto model_load_failed = zks::server::map_runtime_error_to_api_error(
+            zks::server::RuntimeError{zks::server::RuntimeErrorCode::ModelLoadFailed,
+                                      "model not found"});
         if (model_load_failed.http_status != 500 || model_load_failed.type != "server_error" ||
             model_load_failed.code != std::optional<std::string>{"model_load_failed"}) {
             return fail("ModelLoadFailed error mapped incorrectly.");
         }
 
-        const auto inference_failed = zks::server::map_zoo_error_to_api_error(
-            zoo::Error{zoo::ErrorCode::InferenceFailed, "decode failed"});
+        const auto inference_failed = zks::server::map_runtime_error_to_api_error(
+            zks::server::RuntimeError{zks::server::RuntimeErrorCode::InferenceFailed,
+                                      "decode failed"});
         if (inference_failed.http_status != 500 ||
             inference_failed.code != std::optional<std::string>{"inference_failed"}) {
             return fail("InferenceFailed error mapped incorrectly.");
         }
 
-        const auto tool_not_found = zks::server::map_zoo_error_to_api_error(
-            zoo::Error{zoo::ErrorCode::ToolNotFound, "unknown tool"});
+        const auto tool_not_found = zks::server::map_runtime_error_to_api_error(
+            zks::server::RuntimeError{zks::server::RuntimeErrorCode::ToolNotFound,
+                                      "unknown tool"});
         if (tool_not_found.http_status != 400 || tool_not_found.type != "invalid_request_error" ||
             tool_not_found.code != std::optional<std::string>{"tool_not_found"}) {
             return fail("ToolNotFound error mapped incorrectly.");
         }
 
-        const auto tool_retries = zks::server::map_zoo_error_to_api_error(
-            zoo::Error{zoo::ErrorCode::ToolRetriesExhausted, "retries exceeded"});
+        const auto tool_retries = zks::server::map_runtime_error_to_api_error(
+            zks::server::RuntimeError{zks::server::RuntimeErrorCode::ToolRetriesExhausted,
+                                      "retries exceeded"});
         if (tool_retries.http_status != 500 || tool_retries.type != "server_error" ||
             tool_retries.code != std::optional<std::string>{"tool_retries_exhausted"}) {
             return fail("ToolRetriesExhausted error mapped incorrectly.");
         }
 
-        const auto template_failed = zks::server::map_zoo_error_to_api_error(
-            zoo::Error{zoo::ErrorCode::TemplateRenderFailed, "render error"});
+        const auto template_failed = zks::server::map_runtime_error_to_api_error(
+            zks::server::RuntimeError{zks::server::RuntimeErrorCode::TemplateRenderFailed,
+                                      "render error"});
         if (template_failed.http_status != 500 ||
             template_failed.code != std::optional<std::string>{"template_render_failed"}) {
             return fail("TemplateRenderFailed error mapped incorrectly.");
@@ -197,14 +202,14 @@ int main() {
     }
 
     {
-        zoo::Response response;
+        zks::server::CompletionResult response;
         response.text = "I used a tool for that.";
 
-        zoo::ToolInvocation inv;
+        zks::server::ToolInvocationRecord inv;
         inv.id = "call-1";
         inv.name = "search_documents";
         inv.arguments_json = R"({"query":"test"})";
-        inv.status = zoo::ToolInvocationStatus::Succeeded;
+        inv.status = zks::server::ToolInvocationStatus::Succeeded;
         inv.result_json = R"({"results":[]})";
         response.tool_invocations.push_back(std::move(inv));
 
@@ -224,7 +229,7 @@ int main() {
             return fail("tool_invocations must be present even when empty.");
         }
 
-        zoo::Response empty_response;
+        zks::server::CompletionResult empty_response;
         auto http_empty = zks::server::make_chat_completion_response("chatcmpl-3", 1234567890,
                                                                      "local-model", empty_response);
         const auto json_empty = parse_body(http_empty);

@@ -148,6 +148,10 @@ latency and throughput data. When `tools` are configured, the shared agent
 registers them at startup, `/v1/tools` returns their schemas, and each
 completion reports per-invocation outcomes in `tool_invocations`.
 
+Under extreme load, the server's bounded continuation executor may reject new
+completion follow-up work with `503` and `error.code = "server_busy"` rather
+than growing threads without bound.
+
 ### Metrics
 
 `GET /metrics` returns:

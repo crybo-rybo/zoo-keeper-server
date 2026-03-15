@@ -41,10 +41,14 @@ int main() {
     auto destroyed = std::make_shared<std::atomic<int>>(0);
     auto started = std::make_shared<std::atomic<bool>>(false);
 
-    runtime->spawn_background([probe = std::make_shared<Probe>(destroyed), started]() mutable {
+    auto submitted =
+        runtime->submit_background([probe = std::make_shared<Probe>(destroyed), started]() mutable {
         started->store(true, std::memory_order_release);
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     });
+    if (!submitted) {
+        return fail("Expected background task submission to succeed.");
+    }
 
     while (!started->load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));

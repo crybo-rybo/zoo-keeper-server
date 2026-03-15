@@ -11,7 +11,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <future>
 #include <map>
 #include <optional>
 #include <spawn.h>
@@ -19,11 +18,11 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <thread>
 #include <utility>
 #include <vector>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -35,7 +34,6 @@ namespace {
 
 constexpr size_t kMaxStdoutBytes = 64 * 1024;
 constexpr size_t kMaxCapturedStderrBytes = 8 * 1024;
-constexpr std::chrono::milliseconds kPollInterval{10};
 constexpr std::string_view kTimeoutContext = "timeout";
 
 struct CapturedStream {
@@ -217,21 +215,35 @@ std::string format_stderr(std::string stderr_text, bool truncated) {
     return " | stderr: " + stderr_text;
 }
 
-CapturedStream read_stream_until_eof(int fd, size_t max_bytes) {
-    CapturedStream captured;
+Result<void> set_non_blocking(int fd, std::string_view label) {
+    const int flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        return std::unexpected("Failed to inspect " + std::string(label) + ": " +
+                               std::strerror(errno));
+    }
+    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+        return std::unexpected("Failed to make " + std::string(label) + " non-blocking: " +
+                               std::strerror(errno));
+    }
+    return {};
+}
+
+Result<bool> read_available(int fd, CapturedStream& captured, size_t max_bytes) {
     std::array<char, 4096> buffer{};
 
     while (true) {
         const auto bytes_read = ::read(fd, buffer.data(), buffer.size());
         if (bytes_read == 0) {
-            break;
+            return false;
         }
         if (bytes_read < 0) {
             if (errno == EINTR) {
                 continue;
             }
-            captured.error = std::string("read failed: ") + std::strerror(errno);
-            break;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return true;
+            }
+            return std::unexpected(std::string("read failed: ") + std::strerror(errno));
         }
 
         const size_t chunk_size = static_cast<size_t>(bytes_read);
@@ -244,9 +256,6 @@ CapturedStream read_stream_until_eof(int fd, size_t max_bytes) {
             captured.truncated = true;
         }
     }
-
-    ::close(fd);
-    return captured;
 }
 
 CommandToolRunResult make_timeout_error(std::uint32_t timeout_ms) {
@@ -301,6 +310,14 @@ PreparedCommandTool prepare_command_tool(const CommandToolConfig& tool) {
 Result<PreparedCommandTool> build_prepared_command_tool(const CommandToolConfig& tool) {
     if (auto validation = tool.validate(); !validation) {
         return std::unexpected(validation.error());
+    }
+
+    if (tool.working_directory.has_value()) {
+        std::error_code error;
+        const bool is_dir = std::filesystem::is_directory(*tool.working_directory, error);
+        if (error || !is_dir) {
+            return std::unexpected("tools.working_directory must point to an existing directory");
+        }
     }
 
 #if !defined(__APPLE__) && !defined(__linux__)
@@ -480,79 +497,218 @@ CommandToolRunResult run_prepared_command_tool(const PreparedCommandTool& prepar
     stdout_pipe[1] = -1;
     stderr_pipe[1] = -1;
 
-    auto stdout_future = std::async(std::launch::async, [fd = stdout_pipe[0]] {
-        return read_stream_until_eof(fd, kMaxStdoutBytes);
-    });
-    auto stderr_future = std::async(std::launch::async, [fd = stderr_pipe[0]] {
-        return read_stream_until_eof(fd, kMaxCapturedStderrBytes);
-    });
+    const auto close_fd = [](int& fd) {
+        if (fd >= 0) {
+            ::close(fd);
+            fd = -1;
+        }
+    };
+
+    if (auto result = set_non_blocking(stdin_pipe[1], "tool stdin"); !result) {
+        close_pipe(stdin_pipe);
+        close_pipe(stdout_pipe);
+        close_pipe(stderr_pipe);
+        ::kill(pid, SIGKILL);
+        int status = 0;
+        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+        }
+        return make_runtime_error(result.error());
+    }
+    if (auto result = set_non_blocking(stdout_pipe[0], "tool stdout"); !result) {
+        close_pipe(stdin_pipe);
+        close_pipe(stdout_pipe);
+        close_pipe(stderr_pipe);
+        ::kill(pid, SIGKILL);
+        int status = 0;
+        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+        }
+        return make_runtime_error(result.error());
+    }
+    if (auto result = set_non_blocking(stderr_pipe[0], "tool stderr"); !result) {
+        close_pipe(stdin_pipe);
+        close_pipe(stdout_pipe);
+        close_pipe(stderr_pipe);
+        ::kill(pid, SIGKILL);
+        int status = 0;
+        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+        }
+        return make_runtime_error(result.error());
+    }
 
     std::string stdin_payload = arguments.dump();
     stdin_payload.push_back('\n');
     size_t offset = 0;
-    while (offset < stdin_payload.size()) {
-        const auto written = ::write(stdin_pipe[1], stdin_payload.data() + offset,
-                                     stdin_payload.size() - offset);
-        if (written < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            if (errno != EPIPE) {
-                ::close(stdin_pipe[1]);
-                stdin_pipe[1] = -1;
-                ::kill(pid, SIGKILL);
-                int status = 0;
-                while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-                }
-                stdout_future.wait();
-                stderr_future.wait();
-                return make_runtime_error(std::string("Failed to write tool stdin: ") +
-                                          std::strerror(errno));
-            }
-            break;
-        }
-        offset += static_cast<size_t>(written);
-    }
-    if (stdin_pipe[1] >= 0) {
-        ::close(stdin_pipe[1]);
-    }
-
-    int status = 0;
+    bool child_exited = false;
     bool timed_out = false;
+    int status = 0;
+    CapturedStream stdout_capture;
+    CapturedStream stderr_capture;
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(prepared.config.timeout_ms);
-    while (true) {
-        const pid_t wait_result = ::waitpid(pid, &status, WNOHANG);
-        if (wait_result == pid) {
-            break;
+
+    const auto wait_for_child = [&]() -> Result<void> {
+        if (child_exited) {
+            return {};
         }
-        if (wait_result < 0) {
+        while (true) {
+            const pid_t wait_result = ::waitpid(pid, &status, WNOHANG);
+            if (wait_result == pid) {
+                child_exited = true;
+                return {};
+            }
+            if (wait_result == 0) {
+                return {};
+            }
             if (errno == EINTR) {
                 continue;
             }
-            stdout_future.wait();
-            stderr_future.wait();
-            return make_runtime_error(std::string("Failed while waiting on tool process: ") +
-                                      std::strerror(errno));
+            return std::unexpected(std::string("Failed while waiting on tool process: ") +
+                                   std::strerror(errno));
         }
-        if (std::chrono::steady_clock::now() >= deadline) {
+    };
+
+    const auto kill_and_wait = [&]() {
+        if (child_exited) {
+            return;
+        }
+        ::kill(pid, SIGKILL);
+        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+        }
+        child_exited = true;
+    };
+
+    while (true) {
+        if (auto wait_result = wait_for_child(); !wait_result) {
+            kill_and_wait();
+            close_fd(stdin_pipe[1]);
+            close_fd(stdout_pipe[0]);
+            close_fd(stderr_pipe[0]);
+            return make_runtime_error(wait_result.error());
+        }
+
+        if (!child_exited && std::chrono::steady_clock::now() >= deadline) {
             timed_out = true;
-            ::kill(pid, SIGKILL);
-            while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-            }
+            close_fd(stdin_pipe[1]);
+            kill_and_wait();
+        }
+
+        if (child_exited && stdout_pipe[0] < 0 && stderr_pipe[0] < 0) {
             break;
         }
-        std::this_thread::sleep_for(kPollInterval);
+
+        std::array<pollfd, 3> poll_fds{};
+        nfds_t fd_count = 0;
+        int stdin_index = -1;
+        int stdout_index = -1;
+        int stderr_index = -1;
+
+        if (stdin_pipe[1] >= 0 && offset < stdin_payload.size()) {
+            stdin_index = static_cast<int>(fd_count);
+            poll_fds[fd_count++] = pollfd{stdin_pipe[1], POLLOUT, 0};
+        }
+        if (stdout_pipe[0] >= 0) {
+            stdout_index = static_cast<int>(fd_count);
+            poll_fds[fd_count++] = pollfd{stdout_pipe[0], static_cast<short>(POLLIN | POLLHUP), 0};
+        }
+        if (stderr_pipe[0] >= 0) {
+            stderr_index = static_cast<int>(fd_count);
+            poll_fds[fd_count++] = pollfd{stderr_pipe[0], static_cast<short>(POLLIN | POLLHUP), 0};
+        }
+
+        if (fd_count == 0) {
+            continue;
+        }
+
+        int poll_timeout_ms = 10;
+        if (!child_exited) {
+            const auto remaining =
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline -
+                                                                      std::chrono::steady_clock::now());
+            poll_timeout_ms = remaining.count() <= 0
+                                  ? 0
+                                  : static_cast<int>(std::min<std::int64_t>(remaining.count(), 10));
+        }
+
+        const int poll_result = ::poll(poll_fds.data(), fd_count, poll_timeout_ms);
+        if (poll_result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            kill_and_wait();
+            close_fd(stdin_pipe[1]);
+            close_fd(stdout_pipe[0]);
+            close_fd(stderr_pipe[0]);
+            return make_runtime_error(std::string("Failed while polling tool pipes: ") +
+                                      std::strerror(errno));
+        }
+        if (poll_result == 0) {
+            continue;
+        }
+
+        if (stdin_index >= 0) {
+            const auto revents = poll_fds[stdin_index].revents;
+            if ((revents & (POLLERR | POLLHUP)) != 0) {
+                close_fd(stdin_pipe[1]);
+            } else if ((revents & POLLOUT) != 0) {
+                while (offset < stdin_payload.size()) {
+                    const auto written =
+                        ::write(stdin_pipe[1], stdin_payload.data() + offset,
+                                stdin_payload.size() - offset);
+                    if (written < 0) {
+                        if (errno == EINTR) {
+                            continue;
+                        }
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            break;
+                        }
+                        if (errno == EPIPE) {
+                            break;
+                        }
+                        kill_and_wait();
+                        close_fd(stdin_pipe[1]);
+                        close_fd(stdout_pipe[0]);
+                        close_fd(stderr_pipe[0]);
+                        return make_runtime_error(std::string("Failed to write tool stdin: ") +
+                                                  std::strerror(errno));
+                    }
+                    offset += static_cast<size_t>(written);
+                }
+
+                if (offset >= stdin_payload.size()) {
+                    close_fd(stdin_pipe[1]);
+                }
+            }
+        }
+
+        if (stdout_index >= 0 && (poll_fds[stdout_index].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
+            auto read_result = read_available(stdout_pipe[0], stdout_capture, kMaxStdoutBytes);
+            if (!read_result) {
+                kill_and_wait();
+                close_fd(stdin_pipe[1]);
+                close_fd(stdout_pipe[0]);
+                close_fd(stderr_pipe[0]);
+                return make_runtime_error("Failed to read tool stdout: " + read_result.error());
+            }
+            if (!*read_result) {
+                close_fd(stdout_pipe[0]);
+            }
+        }
+
+        if (stderr_index >= 0 && (poll_fds[stderr_index].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
+            auto read_result = read_available(stderr_pipe[0], stderr_capture, kMaxCapturedStderrBytes);
+            if (!read_result) {
+                kill_and_wait();
+                close_fd(stdin_pipe[1]);
+                close_fd(stdout_pipe[0]);
+                close_fd(stderr_pipe[0]);
+                return make_runtime_error("Failed to read tool stderr: " + read_result.error());
+            }
+            if (!*read_result) {
+                close_fd(stderr_pipe[0]);
+            }
+        }
     }
 
-    const auto stdout_capture = stdout_future.get();
-    const auto stderr_capture = stderr_future.get();
-    if (stdout_capture.error.has_value()) {
-        return make_runtime_error("Failed to read tool stdout: " + *stdout_capture.error);
-    }
-    if (stderr_capture.error.has_value()) {
-        return make_runtime_error("Failed to read tool stderr: " + *stderr_capture.error);
-    }
     if (timed_out) {
         return make_timeout_error(prepared.config.timeout_ms);
     }
@@ -664,13 +820,6 @@ Result<void> CommandToolConfig::validate() const {
         !schema_validation) {
         return std::unexpected(schema_validation.error());
     }
-    if (working_directory.has_value()) {
-        std::error_code error;
-        const bool is_dir = std::filesystem::is_directory(*working_directory, error);
-        if (error || !is_dir) {
-            return std::unexpected("tools.working_directory must point to an existing directory");
-        }
-    }
     for (const auto& [key, value] : env) {
         if (key.empty()) {
             return std::unexpected("tools.env keys must not be empty");
@@ -679,10 +828,6 @@ Result<void> CommandToolConfig::validate() const {
             return std::unexpected("tools.env keys must not contain '='");
         }
         (void)value;
-    }
-    if (!resolve_executable_path(*this).has_value()) {
-        return std::unexpected("tools.command executable not found or not executable: " +
-                               command.front());
     }
     return {};
 }
@@ -700,7 +845,7 @@ Result<ToolProvider> make_command_tool_provider(const std::vector<CommandToolCon
     prepared_tools.reserve(tools.size());
 
     ToolProvider provider;
-    provider.metadata.reserve(tools.size());
+    provider.tools.reserve(tools.size());
 
     for (const auto& tool : tools) {
         auto prepared = build_prepared_command_tool(tool);
@@ -708,34 +853,29 @@ Result<ToolProvider> make_command_tool_provider(const std::vector<CommandToolCon
             return std::unexpected("Invalid tool '" + tool.name + "': " + prepared.error());
         }
 
-        provider.metadata.push_back(zoo::tools::ToolMetadata{tool.name, tool.description,
-                                                             tool.parameters_schema, {}});
+        provider.tools.push_back(RegisteredTool{
+            .definition = ToolDefinition{tool.name, tool.description, tool.parameters_schema},
+            .invoke = {},
+        });
         prepared_tools.push_back(std::move(*prepared));
     }
 
-    provider.install = [prepared_tools = std::move(prepared_tools)](zoo::Agent& agent) -> Result<void> {
-        for (const auto& prepared : prepared_tools) {
-            auto register_result = agent.register_tool(
-                prepared.config.name, prepared.config.description, prepared.config.parameters_schema,
-                [prepared](const nlohmann::json& arguments) -> zoo::Expected<nlohmann::json> {
-                    auto result = run_prepared_command_tool(prepared, arguments);
-                    if (!result) {
-                        return std::unexpected(zoo::Error{
-                            zoo::ErrorCode::ToolExecutionFailed,
-                            result.error().message,
-                            result.error().timed_out ? std::optional<std::string>(kTimeoutContext)
-                                                     : std::nullopt,
-                        });
-                    }
-                    return *result;
+    for (size_t index = 0; index < prepared_tools.size(); ++index) {
+        const auto& prepared = prepared_tools[index];
+        provider.tools[index].invoke =
+            [prepared](const nlohmann::json& arguments) -> RuntimeResult<nlohmann::json> {
+            auto result = run_prepared_command_tool(prepared, arguments);
+            if (!result) {
+                return std::unexpected(RuntimeError{
+                    RuntimeErrorCode::ToolExecutionFailed,
+                    result.error().message,
+                    result.error().timed_out ? std::optional<std::string>(kTimeoutContext)
+                                             : std::nullopt,
                 });
-            if (!register_result) {
-                return std::unexpected("Failed to register tool '" + prepared.config.name +
-                                       "': " + register_result.error().to_string());
             }
-        }
-        return {};
-    };
+            return *result;
+        };
+    }
 
     return provider;
 }

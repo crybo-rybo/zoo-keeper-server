@@ -1,3 +1,4 @@
+#include "server/command_tools.hpp"
 #include "server/config.hpp"
 
 #include <chrono>
@@ -272,13 +273,21 @@ int main() {
 
     {
         auto cfg = zks::server::load_config(missing_tool_path);
-        if (cfg) {
-            std::cerr << "Missing tool config unexpectedly parsed successfully." << '\n';
+        if (!cfg) {
+            std::cerr << "Missing tool config should pass semantic config validation: "
+                      << cfg.error() << '\n';
             cleanup();
             return 1;
         }
-        if (cfg.error().find("tools.command executable not found") == std::string::npos) {
-            std::cerr << "Missing tool config failed for wrong reason: " << cfg.error() << '\n';
+        auto provider = zks::server::make_command_tool_provider(cfg->tools);
+        if (provider) {
+            std::cerr << "Missing tool provider unexpectedly prepared successfully." << '\n';
+            cleanup();
+            return 1;
+        }
+        if (provider.error().find("executable not found") == std::string::npos) {
+            std::cerr << "Missing tool provider failed for wrong reason: " << provider.error()
+                      << '\n';
             cleanup();
             return 1;
         }

@@ -85,15 +85,20 @@ endif()
 add_subdirectory(extern/zoo-keeper)
 
 add_library(zks_server_core
+    src/server/api_types.cpp
     src/server/api_json.cpp
     src/server/api_routes.cpp
     src/server/chat_service.cpp
+    src/server/completion_controller.cpp
     src/server/command_tools.cpp
     src/server/config.cpp
+    src/server/executor.cpp
+    src/server/http_server.cpp
     src/server/runtime.cpp
     src/server/session_manager.cpp
     src/server/streaming.cpp
     src/server/health.cpp
+    src/server/zoo_adapter.cpp
 )
 if(ZKS_ENABLE_TEST_UI)
     target_sources(zks_server_core PRIVATE

@@ -1,7 +1,6 @@
 #include "server/session_manager.hpp"
 
 #include <atomic>
-#include <expected>
 #include <future>
 #include <iostream>
 #include <memory>
@@ -19,18 +18,52 @@ int fail(std::string_view message) {
     return 1;
 }
 
+class PromiseCompletionSource final : public zks::server::CompletionSource {
+  public:
+    explicit PromiseCompletionSource(
+        std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future)
+        : future_(std::move(future)) {}
+
+    [[nodiscard]] std::future_status
+    wait_for(std::chrono::milliseconds timeout) const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (consumed_) {
+            return std::future_status::ready;
+        }
+        return future_.wait_for(timeout);
+    }
+
+    zks::server::RuntimeResult<zks::server::CompletionResult> get() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (consumed_) {
+            return std::unexpected(zks::server::RuntimeError{
+                zks::server::RuntimeErrorCode::RuntimeFailure,
+                "Completion already consumed",
+            });
+        }
+        consumed_ = true;
+        return future_.get();
+    }
+
+  private:
+    mutable std::mutex mutex_;
+    mutable std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future_;
+    bool consumed_ = false;
+};
+
 struct SubmittedRequest {
-    zoo::RequestId id = 0;
-    std::vector<zoo::Message> messages;
-    std::optional<std::function<void(std::string_view)>> callback;
-    std::promise<zoo::Expected<zoo::Response>> promise;
+    std::uint64_t id = 0;
+    std::vector<zks::server::ChatMessage> messages;
+    std::optional<zks::server::TokenCallback> callback;
+    std::promise<zks::server::RuntimeResult<zks::server::CompletionResult>> promise;
     bool cancelled = false;
 };
 
 class FakeExecutor {
   public:
-    zoo::RequestHandle start(std::vector<zoo::Message> messages,
-                             std::optional<std::function<void(std::string_view)>> callback) {
+    zks::server::CompletionHandle start(
+        std::vector<zks::server::ChatMessage> messages,
+        std::optional<zks::server::TokenCallback> callback) {
         auto request = std::make_shared<SubmittedRequest>();
         request->id = next_request_id_++;
         request->messages = std::move(messages);
@@ -39,10 +72,13 @@ class FakeExecutor {
         auto future = request->promise.get_future();
         std::lock_guard<std::mutex> lock(mutex_);
         requests_.push_back(request);
-        return zoo::RequestHandle{request->id, std::move(future)};
+        return zks::server::CompletionHandle{
+            request->id,
+            std::make_shared<PromiseCompletionSource>(std::move(future)),
+        };
     }
 
-    void cancel(zoo::RequestId request_id) {
+    void cancel(std::uint64_t request_id) {
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& request : requests_) {
             if (request->id == request_id) {
@@ -64,7 +100,7 @@ class FakeExecutor {
 
   private:
     mutable std::mutex mutex_;
-    zoo::RequestId next_request_id_ = 1;
+    std::uint64_t next_request_id_ = 1;
     std::vector<std::shared_ptr<SubmittedRequest>> requests_;
 };
 
@@ -73,7 +109,7 @@ zks::server::ChatCompletionRequest make_chat_request(const std::string& session_
     zks::server::ChatCompletionRequest request;
     request.model = "local-model";
     request.session_id = session_id;
-    request.messages.push_back(zoo::Message::user(content));
+    request.messages.push_back(zks::server::ChatMessage::user(content));
     return request;
 }
 
@@ -86,18 +122,19 @@ make_session_manager(FakeExecutor& executor, std::string base_prompt = "Base pro
 
     return std::make_unique<zks::server::SessionManager>(
         "local-model", config, std::move(base_prompt), max_history_messages,
-        [&executor](std::vector<zoo::Message> messages,
-                    std::optional<std::function<void(std::string_view)>> callback) {
+        [&executor](std::vector<zks::server::ChatMessage> messages,
+                    std::optional<zks::server::TokenCallback> callback) {
             return executor.start(std::move(messages), std::move(callback));
         },
-        [&executor](zoo::RequestId request_id) { executor.cancel(request_id); });
+        [&executor](std::uint64_t request_id) { executor.cancel(request_id); });
 }
 
-zoo::Expected<zoo::Response> finish_pending(zks::server::PendingChatCompletion& pending,
-                                            const std::shared_ptr<SubmittedRequest>& submitted,
-                                            zoo::Expected<zoo::Response> result) {
+zks::server::RuntimeResult<zks::server::CompletionResult>
+finish_pending(zks::server::PendingChatCompletion& pending,
+               const std::shared_ptr<SubmittedRequest>& submitted,
+               zks::server::RuntimeResult<zks::server::CompletionResult> result) {
     submitted->promise.set_value(std::move(result));
-    auto observed = pending.handle.future.get();
+    auto observed = pending.handle.get();
     if (pending.on_result) {
         pending.on_result(observed);
     }
@@ -126,15 +163,15 @@ int test_create_session_and_commit_history() {
         return fail("Expected first session completion to start successfully.");
     }
 
-    const std::vector<zoo::Message> expected_first = {
-        zoo::Message::system("Base prompt\n\nSession prompt"),
-        zoo::Message::user("Hello"),
+    const std::vector<zks::server::ChatMessage> expected_first = {
+        zks::server::ChatMessage::system("Base prompt\n\nSession prompt"),
+        zks::server::ChatMessage::user("Hello"),
     };
     if (executor.request(0)->messages != expected_first) {
         return fail("Session completion did not submit the expected first-turn history.");
     }
 
-    zoo::Response response;
+    zks::server::CompletionResult response;
     response.text = "Hi there";
     auto observed = finish_pending(*pending, executor.request(0), response);
     if (!observed || observed->text != "Hi there") {
@@ -147,11 +184,11 @@ int test_create_session_and_commit_history() {
         return fail("Expected second session completion to start successfully.");
     }
 
-    const std::vector<zoo::Message> expected_second = {
-        zoo::Message::system("Base prompt\n\nSession prompt"),
-        zoo::Message::user("Hello"),
-        zoo::Message::assistant("Hi there"),
-        zoo::Message::user("Follow up"),
+    const std::vector<zks::server::ChatMessage> expected_second = {
+        zks::server::ChatMessage::system("Base prompt\n\nSession prompt"),
+        zks::server::ChatMessage::user("Hello"),
+        zks::server::ChatMessage::assistant("Hi there"),
+        zks::server::ChatMessage::user("Follow up"),
     };
     if (executor.request(1)->messages != expected_second) {
         return fail("Successful completion was not committed to retained session history.");
@@ -180,7 +217,10 @@ int test_failed_turn_does_not_mutate_history() {
         return fail("Expected first session completion to start in failed-turn test.");
     }
 
-    auto error = std::unexpected(zoo::Error{zoo::ErrorCode::InferenceFailed, "boom"});
+    auto error = std::unexpected(zks::server::RuntimeError{
+        zks::server::RuntimeErrorCode::InferenceFailed,
+        "boom",
+    });
     auto observed = finish_pending(*pending, executor.request(0), error);
     if (observed) {
         return fail("Expected failed-turn completion to surface an error.");
@@ -191,15 +231,15 @@ int test_failed_turn_does_not_mutate_history() {
         return fail("Expected retry completion to start after failure.");
     }
 
-    const std::vector<zoo::Message> expected_retry = {
-        zoo::Message::system("Base prompt"),
-        zoo::Message::user("Retry"),
+    const std::vector<zks::server::ChatMessage> expected_retry = {
+        zks::server::ChatMessage::system("Base prompt"),
+        zks::server::ChatMessage::user("Retry"),
     };
     if (executor.request(1)->messages != expected_retry) {
         return fail("Failed turn was incorrectly committed to retained history.");
     }
 
-    zoo::Response response;
+    zks::server::CompletionResult response;
     response.text = "Recovered";
     observed = finish_pending(*retry, executor.request(1), response);
     if (!observed || observed->text != "Recovered") {
@@ -239,7 +279,7 @@ int test_same_session_busy_but_different_sessions_can_queue() {
         return fail("Expected both active sessions to submit requests to the shared executor.");
     }
 
-    zoo::Response response;
+    zks::server::CompletionResult response;
     response.text = "ok";
     auto observed = finish_pending(*first, executor.request(0), response);
     if (!observed) {
@@ -260,25 +300,26 @@ int test_delete_active_session_cancels_request() {
 
     auto created = manager->create_session({"local-model", std::nullopt});
     if (!created) {
-        return fail("Expected session creation to succeed for delete test.");
+        return fail("Expected session creation to succeed.");
     }
 
     auto pending = manager->start_completion(make_chat_request(created->id, "Hello"), next_completion_id);
     if (!pending) {
-        return fail("Expected active request before deleting session.");
+        return fail("Expected session completion to start before deletion.");
     }
+    auto submitted = executor.request(0);
 
     auto deleted = manager->delete_session(created->id);
     if (!deleted) {
-        return fail("Expected delete_session to succeed.");
+        return fail("Expected session deletion to succeed.");
     }
-    if (!executor.request(0)->cancelled) {
-        return fail("Deleting an active session should cancel the shared-agent request.");
+    if (!submitted->cancelled) {
+        return fail("Deleting an active session should cancel the executor request.");
     }
 
-    zoo::Response response;
+    zks::server::CompletionResult response;
     response.text = "late answer";
-    auto observed = finish_pending(*pending, executor.request(0), response);
+    auto observed = finish_pending(*pending, submitted, response);
     if (!observed || observed->text != "late answer") {
         return fail("Expected deleted-session completion future to resolve.");
     }
@@ -287,79 +328,93 @@ int test_delete_active_session_cancels_request() {
     if (missing || missing.error().http_status != 404) {
         return fail("Deleted session should no longer be retrievable.");
     }
+    return 0;
+}
+
+int test_session_capacity_is_enforced() {
+    FakeExecutor executor;
+    auto manager = make_session_manager(executor, "Base prompt", 64, 1);
+
+    auto first = manager->create_session({"local-model", std::nullopt});
+    if (!first) {
+        return fail("Expected first session creation to succeed.");
+    }
+
+    auto second = manager->create_session({"local-model", std::nullopt});
+    if (second || second.error().http_status != 503 ||
+        second.error().code != std::optional<std::string>{"session_capacity_reached"}) {
+        return fail("Expected session capacity to reject the second session.");
+    }
 
     return 0;
 }
 
-int test_history_trimming_preserves_exchange_boundaries() {
+int test_history_trims_oldest_turns() {
     FakeExecutor executor;
     auto manager = make_session_manager(executor, "Base prompt", 2);
     std::atomic<std::uint64_t> next_completion_id{1};
 
     auto created = manager->create_session({"local-model", std::nullopt});
     if (!created) {
-        return fail("Expected session creation to succeed for trimming test.");
+        return fail("Expected session creation to succeed for history trimming test.");
     }
 
-    zoo::Response response;
-    response.text = "One answer";
     auto first = manager->start_completion(make_chat_request(created->id, "One"), next_completion_id);
     if (!first) {
-        return fail("Expected first trimmed-history request to start.");
+        return fail("Expected first history request to start.");
     }
-    if (!finish_pending(*first, executor.request(0), response)) {
-        return fail("Expected first trimmed-history request to succeed.");
-    }
+    zks::server::CompletionResult response;
+    response.text = "One answer";
+    finish_pending(*first, executor.request(0), response);
 
-    response.text = "Two answer";
     auto second = manager->start_completion(make_chat_request(created->id, "Two"), next_completion_id);
     if (!second) {
-        return fail("Expected second trimmed-history request to start.");
+        return fail("Expected second history request to start.");
     }
-    if (!finish_pending(*second, executor.request(1), response)) {
-        return fail("Expected second trimmed-history request to succeed.");
-    }
+    response.text = "Two answer";
+    finish_pending(*second, executor.request(1), response);
 
     auto third = manager->start_completion(make_chat_request(created->id, "Three"), next_completion_id);
     if (!third) {
-        return fail("Expected third trimmed-history request to start.");
+        return fail("Expected third history request to start.");
     }
 
-    const std::vector<zoo::Message> expected = {
-        zoo::Message::system("Base prompt"),
-        zoo::Message::user("Two"),
-        zoo::Message::assistant("Two answer"),
-        zoo::Message::user("Three"),
+    const std::vector<zks::server::ChatMessage> expected = {
+        zks::server::ChatMessage::system("Base prompt"),
+        zks::server::ChatMessage::user("Two"),
+        zks::server::ChatMessage::assistant("Two answer"),
+        zks::server::ChatMessage::user("Three"),
     };
     if (executor.request(2)->messages != expected) {
-        return fail("History trimming did not preserve the newest full exchange.");
+        return fail("Session history did not trim the oldest turn as expected.");
     }
 
     response.text = "Three answer";
-    if (!finish_pending(*third, executor.request(2), response)) {
-        return fail("Expected third trimmed-history request to succeed.");
-    }
-
+    finish_pending(*third, executor.request(2), response);
     return 0;
 }
 
 } // namespace
 
 int main() {
-    if (int rc = test_create_session_and_commit_history(); rc != 0) {
-        return rc;
+    if (auto status = test_create_session_and_commit_history(); status != 0) {
+        return status;
     }
-    if (int rc = test_failed_turn_does_not_mutate_history(); rc != 0) {
-        return rc;
+    if (auto status = test_failed_turn_does_not_mutate_history(); status != 0) {
+        return status;
     }
-    if (int rc = test_same_session_busy_but_different_sessions_can_queue(); rc != 0) {
-        return rc;
+    if (auto status = test_same_session_busy_but_different_sessions_can_queue(); status != 0) {
+        return status;
     }
-    if (int rc = test_delete_active_session_cancels_request(); rc != 0) {
-        return rc;
+    if (auto status = test_delete_active_session_cancels_request(); status != 0) {
+        return status;
     }
-    if (int rc = test_history_trimming_preserves_exchange_boundaries(); rc != 0) {
-        return rc;
+    if (auto status = test_session_capacity_is_enforced(); status != 0) {
+        return status;
     }
+    if (auto status = test_history_trims_oldest_turns(); status != 0) {
+        return status;
+    }
+
     return 0;
 }

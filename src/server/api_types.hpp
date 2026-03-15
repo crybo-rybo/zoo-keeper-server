@@ -1,8 +1,12 @@
 #pragma once
 
+#include "server/result.hpp"
+
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -11,8 +15,7 @@
 #include <utility>
 #include <vector>
 
-#include <zoo/agent.hpp>
-#include <zoo/core/types.hpp>
+#include <nlohmann/json.hpp>
 
 namespace zks::server {
 
@@ -25,6 +28,140 @@ struct ApiError {
 };
 
 template <typename T> using ApiResult = std::expected<T, ApiError>;
+
+enum class MessageRole {
+    System,
+    User,
+    Assistant,
+    Tool,
+};
+
+[[nodiscard]] std::string_view to_string(MessageRole role) noexcept;
+
+struct ChatMessage {
+    MessageRole role = MessageRole::User;
+    std::string content;
+    std::optional<std::string> tool_call_id;
+
+    [[nodiscard]] static ChatMessage system(std::string content);
+    [[nodiscard]] static ChatMessage user(std::string content);
+    [[nodiscard]] static ChatMessage assistant(std::string content);
+    [[nodiscard]] static ChatMessage tool(std::string content, std::string tool_call_id);
+
+    bool operator==(const ChatMessage& other) const = default;
+};
+
+[[nodiscard]] Result<void> validate_message_sequence(const std::vector<ChatMessage>& history,
+                                                     MessageRole next_role);
+
+enum class ToolInvocationStatus {
+    Succeeded,
+    ValidationFailed,
+    ExecutionFailed,
+};
+
+[[nodiscard]] std::string_view to_string(ToolInvocationStatus status) noexcept;
+
+enum class RuntimeErrorCode {
+    InvalidConfig,
+    InvalidSamplingParams,
+    InvalidModelPath,
+    InvalidContextSize,
+    BackendInitFailed,
+    ModelLoadFailed,
+    ContextCreationFailed,
+    InferenceFailed,
+    TokenizationFailed,
+    ContextWindowExceeded,
+    InvalidMessageSequence,
+    TemplateRenderFailed,
+    AgentNotRunning,
+    RequestCancelled,
+    RequestTimeout,
+    QueueFull,
+    ToolNotFound,
+    ToolExecutionFailed,
+    InvalidToolSignature,
+    InvalidToolSchema,
+    ToolValidationFailed,
+    ToolRetriesExhausted,
+    ToolLoopLimitReached,
+    RuntimeFailure,
+};
+
+struct RuntimeError {
+    RuntimeErrorCode code = RuntimeErrorCode::RuntimeFailure;
+    std::string message;
+    std::optional<std::string> context;
+
+    bool operator==(const RuntimeError& other) const = default;
+};
+
+template <typename T> using RuntimeResult = std::expected<T, RuntimeError>;
+
+struct ToolDefinition {
+    std::string name;
+    std::string description;
+    nlohmann::json parameters_schema;
+
+    bool operator==(const ToolDefinition& other) const = default;
+};
+
+struct ToolInvocationRecord {
+    std::string id;
+    std::string name;
+    std::string arguments_json;
+    ToolInvocationStatus status = ToolInvocationStatus::Succeeded;
+    std::optional<std::string> result_json;
+    std::optional<RuntimeError> error;
+
+    bool operator==(const ToolInvocationRecord& other) const = default;
+};
+
+struct CompletionUsage {
+    std::int64_t prompt_tokens = 0;
+    std::int64_t completion_tokens = 0;
+    std::int64_t total_tokens = 0;
+
+    bool operator==(const CompletionUsage& other) const = default;
+};
+
+struct CompletionMetrics {
+    std::chrono::milliseconds latency_ms{0};
+    std::chrono::milliseconds time_to_first_token_ms{0};
+    double tokens_per_second = 0.0;
+
+    bool operator==(const CompletionMetrics& other) const = default;
+};
+
+struct CompletionResult {
+    std::string text;
+    CompletionUsage usage;
+    CompletionMetrics metrics;
+    std::vector<ToolInvocationRecord> tool_invocations;
+
+    bool operator==(const CompletionResult& other) const = default;
+};
+
+using TokenCallback = std::function<void(std::string_view)>;
+using CompletionObserver = std::function<void(const RuntimeResult<CompletionResult>&)>;
+
+class CompletionSource {
+  public:
+    virtual ~CompletionSource() = default;
+
+    [[nodiscard]] virtual std::future_status
+    wait_for(std::chrono::milliseconds timeout) const = 0;
+    virtual RuntimeResult<CompletionResult> get() = 0;
+};
+
+struct CompletionHandle {
+    std::uint64_t id = 0;
+    std::shared_ptr<CompletionSource> source;
+
+    [[nodiscard]] std::future_status wait_for(std::chrono::milliseconds timeout) const;
+    RuntimeResult<CompletionResult> get() const;
+};
 
 inline ApiError invalid_request_error(std::string message,
                                       std::optional<std::string> param = std::nullopt,
@@ -57,7 +194,7 @@ inline ApiError auth_error(std::string message, std::optional<std::string> code 
 
 struct ChatCompletionRequest {
     std::string model;
-    std::vector<zoo::Message> messages;
+    std::vector<ChatMessage> messages;
     bool stream = false;
     std::optional<std::string> session_id;
 };
@@ -108,8 +245,8 @@ struct PendingChatCompletion {
     std::string id;
     std::int64_t created = 0;
     std::string model;
-    zoo::RequestHandle handle;
-    std::function<void(const zoo::Expected<zoo::Response>&)> on_result;
+    CompletionHandle handle;
+    CompletionObserver on_result;
     std::function<void()> cancel;
     std::shared_ptr<CompletionLease> lease;
 };

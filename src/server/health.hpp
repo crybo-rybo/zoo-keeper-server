@@ -10,6 +10,7 @@ namespace zks::server {
 
 [[nodiscard]] drogon::HttpResponsePtr make_health_response(const HealthSnapshot& snapshot);
 
-void register_health_routes(const std::shared_ptr<const ServerRuntime>& runtime);
+void register_health_routes(drogon::HttpAppFramework& app,
+                            const std::shared_ptr<const ServerRuntime>& runtime);
 
 } // namespace zks::server

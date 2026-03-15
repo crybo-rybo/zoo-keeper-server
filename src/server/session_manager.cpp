@@ -26,18 +26,18 @@ std::string combine_system_prompts(const std::string& base_prompt,
     return base_prompt + "\n\n" + *request_prompt;
 }
 
-std::vector<zoo::Message> make_initial_history(const std::string& base_prompt,
-                                               const std::optional<std::string>& request_prompt) {
+std::vector<ChatMessage> make_initial_history(const std::string& base_prompt,
+                                              const std::optional<std::string>& request_prompt) {
     const std::string effective_prompt = combine_system_prompts(base_prompt, request_prompt);
     if (effective_prompt.empty()) {
         return {};
     }
-    return {zoo::Message::system(effective_prompt)};
+    return {ChatMessage::system(effective_prompt)};
 }
 
-void trim_history_to_fit(std::vector<zoo::Message>& messages, size_t max_history_messages) {
+void trim_history_to_fit(std::vector<ChatMessage>& messages, size_t max_history_messages) {
     const size_t system_offset =
-        (!messages.empty() && messages.front().role == zoo::Role::System) ? 1u : 0u;
+        (!messages.empty() && messages.front().role == MessageRole::System) ? 1u : 0u;
 
     if (messages.size() <= system_offset + max_history_messages) {
         return;
@@ -48,7 +48,7 @@ void trim_history_to_fit(std::vector<zoo::Message>& messages, size_t max_history
         erase_end = system_offset;
     }
 
-    while (erase_end < messages.size() && messages[erase_end].role != zoo::Role::User) {
+    while (erase_end < messages.size() && messages[erase_end].role != MessageRole::User) {
         ++erase_end;
     }
 
@@ -60,7 +60,8 @@ void trim_history_to_fit(std::vector<zoo::Message>& messages, size_t max_history
                    messages.begin() + static_cast<std::ptrdiff_t>(erase_end));
 }
 
-void log_session_event(std::string_view event, std::string_view session_id, std::string_view detail) {
+void log_session_event(std::string_view event, std::string_view session_id,
+                       std::string_view detail) {
     std::clog << "[session] event=" << event << " session_id=" << session_id
               << " detail=\"" << detail << "\"" << '\n';
 }
@@ -165,9 +166,9 @@ ApiResult<SessionSummary> SessionManager::create_session(const SessionCreateRequ
         log_session_event("expired", expired_session->id, "idle timeout reached");
     }
 
-    auto created = now_seconds();
-    auto expires_at = created + static_cast<std::int64_t>(config_.idle_ttl_seconds);
-    auto session_id =
+    const auto created = now_seconds();
+    const auto expires_at = created + static_cast<std::int64_t>(config_.idle_ttl_seconds);
+    const auto session_id =
         "sess-" + std::to_string(next_session_id_.fetch_add(1, std::memory_order_relaxed));
     auto session = std::make_shared<SessionState>(
         session_id, model_id_, created, expires_at,
@@ -239,7 +240,7 @@ ApiResult<void> SessionManager::delete_session(std::string_view session_id) {
         sessions_.erase(it);
     }
 
-    std::optional<zoo::RequestId> request_id;
+    std::optional<std::uint64_t> request_id;
     {
         std::lock_guard<std::mutex> session_lock(session->mutex);
         session->closed = true;
@@ -255,7 +256,7 @@ ApiResult<void> SessionManager::delete_session(std::string_view session_id) {
 
 ApiResult<PendingChatCompletion> SessionManager::start_completion(
     const ChatCompletionRequest& request, std::atomic<std::uint64_t>& next_completion_id,
-    std::optional<std::function<void(std::string_view)>> callback) {
+    std::optional<TokenCallback> callback) {
     if (!enabled()) {
         return std::unexpected(disabled_error());
     }
@@ -266,7 +267,7 @@ ApiResult<PendingChatCompletion> SessionManager::start_completion(
         return std::unexpected(
             invalid_request_error("Unknown model: " + request.model, "model", "invalid_model"));
     }
-    if (request.messages.size() != 1u || request.messages.front().role != zoo::Role::User) {
+    if (request.messages.size() != 1u || request.messages.front().role != MessageRole::User) {
         return std::unexpected(invalid_request_error(
             "Session chat requests must contain exactly one user message", "messages",
             "invalid_message_sequence"));
@@ -289,10 +290,10 @@ ApiResult<PendingChatCompletion> SessionManager::start_completion(
         log_session_event("expired", expired_session->id, "idle timeout reached");
     }
 
-    std::int64_t started_at = now_seconds();
-    const zoo::Message user_message = request.messages.front();
-    std::vector<zoo::Message> full_messages;
-    zoo::RequestHandle handle;
+    const std::int64_t started_at = now_seconds();
+    const ChatMessage user_message = request.messages.front();
+    std::vector<ChatMessage> full_messages;
+    CompletionHandle handle;
     {
         std::lock_guard<std::mutex> session_lock(session->mutex);
         if (session->closed) {
@@ -323,7 +324,7 @@ ApiResult<PendingChatCompletion> SessionManager::start_completion(
         model_id_,
         std::move(handle),
         [this, session, request_id = session->active_request.value(), user_message](
-            const zoo::Expected<zoo::Response>& result) {
+            const RuntimeResult<CompletionResult>& result) {
             finish_request(session, request_id, user_message, result);
         },
         [this, request_id = session->active_request.value()] { request_canceler_(request_id); },
@@ -332,7 +333,7 @@ ApiResult<PendingChatCompletion> SessionManager::start_completion(
 }
 
 void SessionManager::finish_request(const std::shared_ptr<SessionState>& session,
-                                    zoo::RequestId request_id) {
+                                    std::uint64_t request_id) {
     std::lock_guard<std::mutex> lock(session->mutex);
     if (!session->active_request.has_value() || *session->active_request != request_id) {
         return;
@@ -344,8 +345,8 @@ void SessionManager::finish_request(const std::shared_ptr<SessionState>& session
 }
 
 void SessionManager::finish_request(const std::shared_ptr<SessionState>& session,
-                                    zoo::RequestId request_id, const zoo::Message& user_message,
-                                    const zoo::Expected<zoo::Response>& result) {
+                                    std::uint64_t request_id, const ChatMessage& user_message,
+                                    const RuntimeResult<CompletionResult>& result) {
     std::lock_guard<std::mutex> lock(session->mutex);
     if (!session->active_request.has_value() || *session->active_request != request_id) {
         return;
@@ -353,7 +354,7 @@ void SessionManager::finish_request(const std::shared_ptr<SessionState>& session
 
     if (!session->closed && result) {
         session->history.push_back(user_message);
-        session->history.push_back(zoo::Message::assistant(result->text));
+        session->history.push_back(ChatMessage::assistant(result->text));
         trim_history_to_fit(session->history, max_history_messages_);
     }
 
@@ -374,7 +375,7 @@ void SessionManager::stop() {
     }
 
     for (auto& [id, session] : sessions) {
-        std::optional<zoo::RequestId> request_id;
+        std::optional<std::uint64_t> request_id;
         {
             std::lock_guard<std::mutex> session_lock(session->mutex);
             session->closed = true;

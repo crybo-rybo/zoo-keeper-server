@@ -109,4 +109,5 @@ Returned when the server cannot accept the request.
 | `not_ready` | The server runtime is not yet initialized or is shutting down. |
 | `agent_not_ready` | The inference agent is not running. |
 | `queue_full` | The request queue is at capacity. Retry after a short delay. |
+| `server_busy` | The server's internal continuation executor is saturated. Retry after a short delay. |
 | `session_capacity_reached` | The server has reached its `max_sessions` limit. |

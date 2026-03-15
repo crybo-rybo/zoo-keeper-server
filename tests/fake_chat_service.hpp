@@ -5,17 +5,15 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <functional>
 #include <future>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
-
-#include <zoo/agent.hpp>
-#include <zoo/core/types.hpp>
 
 /// Configurable behavior modes for `FakeChatService::start_completion()`.
 enum class FakeCompletionMode {
@@ -27,11 +25,56 @@ enum class FakeCompletionMode {
     QueueFull,
     /// Returns a PendingChatCompletion whose future resolves to `RequestCancelled`.
     Cancelled,
-    /// Returns a PendingChatCompletion whose future resolves to a successful Response
-    /// after streaming a few tokens via the callback. The future blocks on `finish_latch`
+    /// Returns a PendingChatCompletion whose future resolves to a successful result after
+    /// streaming a few tokens via the callback. The future blocks on `finish_latch`
     /// so the test can drop the connection before it completes.
     StreamingSuccess,
 };
+
+namespace {
+
+class TestCompletionSource final : public zks::server::CompletionSource {
+  public:
+    explicit TestCompletionSource(
+        std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future)
+        : future_(std::move(future)) {}
+
+    [[nodiscard]] std::future_status
+    wait_for(std::chrono::milliseconds timeout) const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (consumed_) {
+            return std::future_status::ready;
+        }
+        return future_.wait_for(timeout);
+    }
+
+    zks::server::RuntimeResult<zks::server::CompletionResult> get() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (consumed_) {
+            return std::unexpected(zks::server::RuntimeError{
+                zks::server::RuntimeErrorCode::RuntimeFailure,
+                "Completion already consumed",
+            });
+        }
+        consumed_ = true;
+        return future_.get();
+    }
+
+  private:
+    mutable std::mutex mutex_;
+    mutable std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future_;
+    bool consumed_ = false;
+};
+
+inline zks::server::CompletionHandle make_handle(
+    std::uint64_t id, std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future) {
+    return zks::server::CompletionHandle{
+        id,
+        std::make_shared<TestCompletionSource>(std::move(future)),
+    };
+}
+
+} // namespace
 
 class FakeChatService final : public zks::server::ChatService {
   public:
@@ -63,7 +106,7 @@ class FakeChatService final : public zks::server::ChatService {
         return model_id_;
     }
 
-    [[nodiscard]] const std::vector<zoo::tools::ToolMetadata>& tools() const noexcept override {
+    [[nodiscard]] const std::vector<zks::server::ToolDefinition>& tools() const noexcept override {
         return tools_;
     }
 
@@ -73,12 +116,12 @@ class FakeChatService final : public zks::server::ChatService {
 
     zks::server::ApiResult<zks::server::PendingChatCompletion> start_completion(
         const zks::server::ChatCompletionRequest&,
-        std::optional<std::function<void(std::string_view)>> callback = std::nullopt) override {
+        std::optional<zks::server::TokenCallback> callback = std::nullopt) override {
 
-        auto mode = mode_.load(std::memory_order_acquire);
+        const auto mode = mode_.load(std::memory_order_acquire);
 
         if (mode == FakeCompletionMode::Success) {
-            std::promise<zoo::Expected<zoo::Response>> promise;
+            std::promise<zks::server::RuntimeResult<zks::server::CompletionResult>> promise;
             auto future = promise.get_future();
             {
                 std::lock_guard<std::mutex> lock(response_mutex_);
@@ -89,7 +132,7 @@ class FakeChatService final : public zks::server::ChatService {
             pending.id = "fake-success-1";
             pending.created = 0;
             pending.model = model_id_;
-            pending.handle = zoo::RequestHandle(0, std::move(future));
+            pending.handle = make_handle(0, std::move(future));
             pending.cancel = [] {};
             return pending;
         }
@@ -104,42 +147,38 @@ class FakeChatService final : public zks::server::ChatService {
         }
 
         if (mode == FakeCompletionMode::Cancelled) {
-            std::promise<zoo::Expected<zoo::Response>> promise;
+            std::promise<zks::server::RuntimeResult<zks::server::CompletionResult>> promise;
             auto future = promise.get_future();
-            promise.set_value(std::unexpected(
-                zoo::Error{zoo::ErrorCode::RequestCancelled, "request was cancelled"}));
+            promise.set_value(std::unexpected(zks::server::RuntimeError{
+                zks::server::RuntimeErrorCode::RequestCancelled,
+                "request was cancelled",
+            }));
 
             zks::server::PendingChatCompletion pending;
             pending.id = "fake-cancelled-1";
             pending.created = 0;
             pending.model = model_id_;
-            pending.handle = zoo::RequestHandle(1, std::move(future));
+            pending.handle = make_handle(1, std::move(future));
             pending.cancel = [] {};
             return pending;
         }
 
         if (mode == FakeCompletionMode::StreamingSuccess) {
-            // Stream some tokens via callback, then wait on the latch before resolving.
             auto latch = finish_latch_;
-            auto mid = model_id_;
-            std::promise<zoo::Expected<zoo::Response>> promise;
+            std::promise<zks::server::RuntimeResult<zks::server::CompletionResult>> promise;
             auto future = promise.get_future();
 
             std::thread([cb = std::move(callback), latch = std::move(latch),
-                         mid = std::move(mid), promise = std::move(promise)]() mutable {
-                // Stream tokens if a callback was provided.
+                         promise = std::move(promise)]() mutable {
                 if (cb.has_value()) {
                     (*cb)("hello ");
                     (*cb)("world");
                 }
 
-                // Wait for the test to signal us to finish (or timeout).
                 latch->wait_for(std::chrono::seconds(10));
 
-                zoo::Response response;
+                zks::server::CompletionResult response;
                 response.text = "hello world";
-                response.usage = {};
-                response.metrics = {};
                 promise.set_value(std::move(response));
             }).detach();
 
@@ -147,7 +186,7 @@ class FakeChatService final : public zks::server::ChatService {
             pending.id = "fake-stream-1";
             pending.created = 0;
             pending.model = model_id_;
-            pending.handle = zoo::RequestHandle(2, std::move(future));
+            pending.handle = make_handle(2, std::move(future));
             pending.cancel = [] {};
             return pending;
         }
@@ -157,19 +196,16 @@ class FakeChatService final : public zks::server::ChatService {
 
     zks::server::ApiResult<zks::server::SessionSummary>
     create_session(const zks::server::SessionCreateRequest&) override {
-        return std::unexpected(
-            zks::server::server_error("not implemented in fake"));
+        return std::unexpected(zks::server::server_error("not implemented in fake"));
     }
 
     zks::server::ApiResult<zks::server::SessionSummary>
     get_session(std::string_view) override {
-        return std::unexpected(
-            zks::server::server_error("not implemented in fake"));
+        return std::unexpected(zks::server::server_error("not implemented in fake"));
     }
 
     zks::server::ApiResult<void> delete_session(std::string_view) override {
-        return std::unexpected(
-            zks::server::server_error("not implemented in fake"));
+        return std::unexpected(zks::server::server_error("not implemented in fake"));
     }
 
     void stop() override {
@@ -192,25 +228,23 @@ class FakeChatService final : public zks::server::ChatService {
         mode_.store(mode, std::memory_order_release);
     }
 
-    void set_tools(std::vector<zoo::tools::ToolMetadata> tools) {
+    void set_tools(std::vector<zks::server::ToolDefinition> tools) {
         tools_ = std::move(tools);
     }
 
-    void set_response(zoo::Response response) {
+    void set_response(zks::server::CompletionResult response) {
         std::lock_guard<std::mutex> lock(response_mutex_);
         response_ = std::move(response);
     }
 
-    /// Returns the shared latch used by `StreamingSuccess` mode. Call `signal()` on
-    /// the returned latch to unblock the fake completion future.
     std::shared_ptr<Latch> finish_latch() const noexcept {
         return finish_latch_;
     }
 
   private:
     std::string model_id_ = "fake-model";
-    std::vector<zoo::tools::ToolMetadata> tools_;
-    zoo::Response response_;
+    std::vector<zks::server::ToolDefinition> tools_;
+    zks::server::CompletionResult response_;
     mutable std::mutex response_mutex_;
     std::atomic<int> stop_calls_{0};
     std::atomic<bool> ready_{true};
