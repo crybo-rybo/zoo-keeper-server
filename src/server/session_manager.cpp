@@ -365,7 +365,7 @@ void SessionManager::finish_request(const std::shared_ptr<SessionState>& session
 }
 
 void SessionManager::stop() {
-    std::unordered_map<std::string, std::shared_ptr<SessionState>> sessions;
+    decltype(sessions_) sessions;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_) {
