@@ -4,13 +4,29 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
+#include <nlohmann/json.hpp>
 #include <zoo/core/types.hpp>
 
 namespace zks::server {
+
+struct CommandToolConfig {
+    std::string name;
+    std::string description;
+    nlohmann::json parameters_schema;
+    std::vector<std::string> command;
+    std::optional<std::filesystem::path> working_directory;
+    bool inherit_environment = false;
+    std::map<std::string, std::string, std::less<>> env;
+    std::uint32_t timeout_ms = 30000;
+
+    [[nodiscard]] Result<void> validate() const;
+};
 
 struct SessionConfig {
     size_t max_sessions = 0;
@@ -38,6 +54,7 @@ struct ServerConfig {
     std::optional<std::string> api_key;
     HttpConfig http;
     SessionConfig sessions;
+    std::vector<CommandToolConfig> tools;
     zoo::Config zoo_config;
 
     [[nodiscard]] Result<void> validate() const;

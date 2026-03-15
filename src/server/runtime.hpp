@@ -2,19 +2,16 @@
 
 #include "server/chat_service.hpp"
 #include "server/config.hpp"
+#include "server/executor.hpp"
 #include "server/metrics.hpp"
 #include "server/result.hpp"
 
-#include <chrono>
 #include <condition_variable>
 #include <functional>
-#include <future>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
-#include <vector>
 
 namespace zks::server {
 
@@ -59,39 +56,23 @@ class ServerRuntime {
 
     void stop();
 
-    template <typename Func> void spawn_background(Func&& task) {
+    template <typename Func> Result<void> submit_background(Func&& task) {
         std::lock_guard<std::mutex> lock(tasks_mutex_);
-        prune_background_tasks_locked();
         if (stopping_) {
-            return;
+            return std::unexpected("Server runtime is stopping");
         }
-
-        background_tasks_.push_back(std::async(std::launch::async,
-                                               [task = std::forward<Func>(task)]() mutable {
-                                                   try {
-                                                       task();
-                                                   } catch (const std::exception& error) {
-                                                       std::cerr
-                                                           << "Background task failed: "
-                                                           << error.what() << '\n';
-                                                   } catch (...) {
-                                                       std::cerr
-                                                           << "Background task failed with an unknown exception"
-                                                           << '\n';
-                                                   }
-                                               }));
+        return continuation_executor_.submit(std::forward<Func>(task));
     }
 
   private:
-    void prune_background_tasks_locked();
     void run_session_reaper();
 
     ServerConfig config_;
     std::shared_ptr<ChatService> chat_service_;
     ServerMetrics metrics_;
+    BoundedExecutor continuation_executor_;
     std::mutex tasks_mutex_;
     std::condition_variable reaper_cv_;
-    std::vector<std::future<void>> background_tasks_;
     std::thread reaper_thread_;
     bool stopping_ = false;
 };

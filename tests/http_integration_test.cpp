@@ -17,8 +17,6 @@
 
 #include <drogon/drogon.h>
 #include <nlohmann/json.hpp>
-#include <zoo/tools/types.hpp>
-
 namespace {
 
 int fail(std::string_view message) {
@@ -61,8 +59,8 @@ int main() {
     auto runtime = std::make_shared<zks::server::ServerRuntime>(config, chat_service);
     auto disconnect_registry = std::make_shared<zks::server::DisconnectRegistry>();
 
-    zks::server::register_health_routes(runtime);
-    zks::server::register_api_routes(runtime, disconnect_registry);
+    zks::server::register_health_routes(drogon::app(), runtime);
+    zks::server::register_api_routes(drogon::app(), runtime, disconnect_registry);
 
     // Signal when the server loop starts
     std::mutex startup_mutex;
@@ -209,6 +207,9 @@ int main() {
                                                  "requests_cancelled_total",
                                                  "requests_queue_rejected_total",
                                                  "stream_disconnects_total",
+                                                 "tool_invocations_total",
+                                                 "tool_failures_total",
+                                                 "tool_timeouts_total",
                                                  "active_sessions",
                                                  "model_id",
                                                  "uptime_seconds"};
@@ -330,13 +331,13 @@ int main() {
 
     // Test 9: GET /v1/tools returns registered tool metadata
     if (result == 0) {
-        chat_service->set_tools({zoo::tools::ToolMetadata{
-            "echo", "Echoes the input back",
+        chat_service->set_tools({zks::server::ToolDefinition{
+            "echo",
+            "Echoes the input back",
             nlohmann::json{{"type", "object"},
                            {"properties", {{"input", {{"type", "string"}}}}},
                            {"required", {"input"}}},
-            {zoo::tools::ToolParameter{"input", zoo::tools::ToolValueType::String, true,
-                                       "The input to echo"}}}});
+        }});
 
         auto req = drogon::HttpRequest::newHttpRequest();
         req->setPath("/v1/tools");
@@ -359,6 +360,76 @@ int main() {
                     result = fail("Test 9 failed: tool name should be 'echo'.");
                 }
             }
+        }
+    }
+
+    // Test 10: successful completion with tool invocations increments tool metrics
+    if (result == 0) {
+        auto before_invocations = read_metric(client, "tool_invocations_total");
+        auto before_failures = read_metric(client, "tool_failures_total");
+        auto before_timeouts = read_metric(client, "tool_timeouts_total");
+        if (!before_invocations.has_value() || !before_failures.has_value() ||
+            !before_timeouts.has_value()) {
+            result = fail("Test 10 failed: could not read tool metrics before request.");
+        } else {
+            zks::server::CompletionResult response;
+            response.text = "tool result";
+
+            zks::server::ToolInvocationRecord succeeded;
+            succeeded.id = "call-1";
+            succeeded.name = "echo";
+            succeeded.arguments_json = R"({"input":"hi"})";
+            succeeded.status = zks::server::ToolInvocationStatus::Succeeded;
+            succeeded.result_json = R"({"output":"hi"})";
+            response.tool_invocations.push_back(std::move(succeeded));
+
+            zks::server::ToolInvocationRecord timed_out;
+            timed_out.id = "call-2";
+            timed_out.name = "echo";
+            timed_out.arguments_json = R"({"input":"slow"})";
+            timed_out.status = zks::server::ToolInvocationStatus::ExecutionFailed;
+            timed_out.error = zks::server::RuntimeError{
+                zks::server::RuntimeErrorCode::ToolExecutionFailed,
+                "Tool command timed out after 10 ms",
+                "timeout",
+            };
+            response.tool_invocations.push_back(std::move(timed_out));
+
+            chat_service->set_response(std::move(response));
+            chat_service->set_mode(FakeCompletionMode::Success);
+
+            auto req = drogon::HttpRequest::newHttpRequest();
+            req->setPath("/v1/chat/completions");
+            req->setMethod(drogon::Post);
+            req->addHeader("Authorization", "Bearer test-secret");
+            req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+            nlohmann::json body = {{"model", "integration-test-model"},
+                                   {"messages", {{{"role", "user"}, {"content", "hi"}}}},
+                                   {"stream", false}};
+            req->setBody(body.dump());
+            auto [status, resp] = client->sendRequest(req, 5.0);
+            if (status != drogon::ReqResult::Ok || !resp ||
+                resp->getStatusCode() != drogon::k200OK) {
+                result = fail("Test 10 failed: successful completion request should return 200.");
+            } else {
+                auto after_invocations = read_metric(client, "tool_invocations_total");
+                auto after_failures = read_metric(client, "tool_failures_total");
+                auto after_timeouts = read_metric(client, "tool_timeouts_total");
+                if (!after_invocations.has_value() || !after_failures.has_value() ||
+                    !after_timeouts.has_value()) {
+                    result = fail("Test 10 failed: could not read tool metrics after request.");
+                } else if (*after_invocations != *before_invocations + 2 ||
+                           *after_failures != *before_failures + 1 ||
+                           *after_timeouts != *before_timeouts + 1) {
+                    std::cerr << "Test 10 failed: unexpected tool metric deltas ("
+                              << *before_invocations << "->" << *after_invocations << ", "
+                              << *before_failures << "->" << *after_failures << ", "
+                              << *before_timeouts << "->" << *after_timeouts << ")\n";
+                    result = 1;
+                }
+            }
+
+            chat_service->set_mode(FakeCompletionMode::ServerError);
         }
     }
 

@@ -94,7 +94,7 @@ Returned when the server encounters an internal failure during inference.
 | `tokenization_failed` | The prompt could not be tokenized. |
 | `template_render_failed` | The chat template could not be rendered. |
 | `request_timeout` | The request exceeded the configured timeout. |
-| `tool_execution_failed` | A registered tool handler returned an error. |
+| `tool_execution_failed` | A registered tool handler returned an error, including command-tool exit failures, invalid stdout, or timeouts. |
 | `tool_retries_exhausted` | Tool-call validation retries were exhausted. |
 | `runtime_error` | Catch-all for unmapped internal errors. |
 
@@ -109,4 +109,5 @@ Returned when the server cannot accept the request.
 | `not_ready` | The server runtime is not yet initialized or is shutting down. |
 | `agent_not_ready` | The inference agent is not running. |
 | `queue_full` | The request queue is at capacity. Retry after a short delay. |
+| `server_busy` | The server's internal continuation executor is saturated. Retry after a short delay. |
 | `session_capacity_reached` | The server has reached its `max_sessions` limit. |

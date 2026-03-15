@@ -6,6 +6,7 @@
 #include <optional>
 #include <unordered_map>
 
+#include <drogon/HttpAppFramework.h>
 #include <trantor/net/TcpConnection.h>
 
 namespace zks::server {
@@ -29,7 +30,8 @@ class DisconnectRegistry {
         callbacks_;
 };
 
-void register_api_routes(const std::shared_ptr<ServerRuntime>& runtime,
+void register_api_routes(drogon::HttpAppFramework& app,
+                         const std::shared_ptr<ServerRuntime>& runtime,
                          const std::shared_ptr<DisconnectRegistry>& disconnect_registry);
 
 } // namespace zks::server

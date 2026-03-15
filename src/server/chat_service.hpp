@@ -9,23 +9,25 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include <zoo/agent.hpp>
-#include <zoo/tools/types.hpp>
+namespace zoo {
+class Agent;
+}
 
 namespace zks::server {
 
-/// Compile-time tool registration passed to `ZooChatService::create()`.
-/// `metadata` is exposed via `/v1/tools`; `install` registers handlers on the agent at startup.
+struct RegisteredTool {
+    ToolDefinition definition;
+    std::function<RuntimeResult<nlohmann::json>(const nlohmann::json&)> invoke;
+};
+
 struct ToolProvider {
-    std::vector<zoo::tools::ToolMetadata> metadata;
-    std::function<Result<void>(zoo::Agent&)> install = [](zoo::Agent&) -> Result<void> {
-        return {};
-    };
+    std::vector<RegisteredTool> tools;
 };
 
 class ChatService {
@@ -34,12 +36,12 @@ class ChatService {
 
     [[nodiscard]] virtual bool is_ready() const noexcept = 0;
     [[nodiscard]] virtual const std::string& model_id() const noexcept = 0;
-    [[nodiscard]] virtual const std::vector<zoo::tools::ToolMetadata>& tools() const noexcept = 0;
+    [[nodiscard]] virtual const std::vector<ToolDefinition>& tools() const noexcept = 0;
     [[nodiscard]] virtual SessionHealth session_health() const noexcept = 0;
 
     virtual ApiResult<PendingChatCompletion> start_completion(
         const ChatCompletionRequest& request,
-        std::optional<std::function<void(std::string_view)>> callback = std::nullopt) = 0;
+        std::optional<TokenCallback> callback = std::nullopt) = 0;
 
     virtual ApiResult<SessionSummary> create_session(const SessionCreateRequest& request) = 0;
     virtual ApiResult<SessionSummary> get_session(std::string_view session_id) = 0;
@@ -57,18 +59,19 @@ class ZooChatService final : public ChatService {
                                                            ToolProvider tools);
 
     ZooChatService(std::string model_id, std::string request_system_prompt,
-                   std::vector<zoo::tools::ToolMetadata> tool_metadata,
+                   std::vector<ToolDefinition> tool_metadata,
                    std::unique_ptr<zoo::Agent> shared_agent,
                    std::unique_ptr<SessionManager> session_manager);
+    ~ZooChatService() override;
 
     [[nodiscard]] bool is_ready() const noexcept override;
     [[nodiscard]] const std::string& model_id() const noexcept override;
-    [[nodiscard]] const std::vector<zoo::tools::ToolMetadata>& tools() const noexcept override;
+    [[nodiscard]] const std::vector<ToolDefinition>& tools() const noexcept override;
     [[nodiscard]] SessionHealth session_health() const noexcept override;
 
     ApiResult<PendingChatCompletion> start_completion(
         const ChatCompletionRequest& request,
-        std::optional<std::function<void(std::string_view)>> callback = std::nullopt) override;
+        std::optional<TokenCallback> callback = std::nullopt) override;
 
     ApiResult<SessionSummary> create_session(const SessionCreateRequest& request) override;
     ApiResult<SessionSummary> get_session(std::string_view session_id) override;
@@ -79,12 +82,11 @@ class ZooChatService final : public ChatService {
     void stop() override;
 
   private:
-    [[nodiscard]] std::vector<zoo::Message>
-    prepare_messages(const ChatCompletionRequest& request) const;
+    [[nodiscard]] std::vector<ChatMessage> prepare_messages(const ChatCompletionRequest& request) const;
 
     std::string model_id_;
     std::string request_system_prompt_;
-    std::vector<zoo::tools::ToolMetadata> tool_metadata_;
+    std::vector<ToolDefinition> tool_metadata_;
     std::unique_ptr<zoo::Agent> agent_;
     std::unique_ptr<SessionManager> session_manager_;
     std::atomic<std::uint64_t> next_completion_id_{1};

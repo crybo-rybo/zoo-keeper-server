@@ -8,7 +8,6 @@
 
 #include <drogon/drogon.h>
 #include <nlohmann/json.hpp>
-#include <zoo/tools/types.hpp>
 
 namespace zks::server {
 
@@ -21,14 +20,14 @@ drogon::HttpResponsePtr make_json_response(const nlohmann::json& body,
                                            drogon::HttpStatusCode status = drogon::k200OK);
 
 drogon::HttpResponsePtr make_models_response(std::string_view model_id);
-drogon::HttpResponsePtr make_tools_response(const std::vector<zoo::tools::ToolMetadata>& tools);
+drogon::HttpResponsePtr make_tools_response(const std::vector<ToolDefinition>& tools);
 drogon::HttpResponsePtr make_session_response(const SessionSummary& summary,
                                               drogon::HttpStatusCode status = drogon::k200OK);
 drogon::HttpResponsePtr make_chat_completion_response(std::string_view completion_id,
                                                       std::int64_t created,
                                                       std::string_view model_id,
-                                                      const zoo::Response& response);
+                                                      const CompletionResult& response);
 
-ApiError map_zoo_error_to_api_error(const zoo::Error& error);
+ApiError map_runtime_error_to_api_error(const RuntimeError& error);
 
 } // namespace zks::server

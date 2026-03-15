@@ -1,17 +1,39 @@
 #include "server/runtime.hpp"
 
+#include "server/command_tools.hpp"
+
+#include <algorithm>
 #include <chrono>
-#include <future>
+#include <thread>
 #include <utility>
 
 namespace zks::server {
 
 namespace {
 constexpr std::chrono::seconds kReaperInterval{60};
+
+size_t continuation_worker_count() {
+    const auto hardware_threads = std::thread::hardware_concurrency();
+    if (hardware_threads == 0) {
+        return 2;
+    }
+    return std::min<size_t>(4, std::max<size_t>(2, hardware_threads));
+}
+
+size_t continuation_queue_depth(const ServerConfig& config) {
+    const size_t request_capacity = std::max<size_t>(
+        1, static_cast<size_t>(config.zoo_config.request_queue_capacity));
+    return std::max<size_t>(32, request_capacity * 2);
+}
 } // namespace
 
 Result<std::shared_ptr<ServerRuntime>> ServerRuntime::create(ServerConfig config) {
-    auto chat_service_result = ZooChatService::create(config);
+    auto tool_provider_result = make_command_tool_provider(config.tools);
+    if (!tool_provider_result) {
+        return std::unexpected(tool_provider_result.error());
+    }
+
+    auto chat_service_result = ZooChatService::create(config, std::move(*tool_provider_result));
     if (!chat_service_result) {
         return std::unexpected(chat_service_result.error());
     }
@@ -20,7 +42,8 @@ Result<std::shared_ptr<ServerRuntime>> ServerRuntime::create(ServerConfig config
 }
 
 ServerRuntime::ServerRuntime(ServerConfig config, std::shared_ptr<ChatService> chat_service)
-    : config_(std::move(config)), chat_service_(std::move(chat_service)) {
+    : config_(std::move(config)), chat_service_(std::move(chat_service)),
+      continuation_executor_(continuation_worker_count(), continuation_queue_depth(config_)) {
     if (config_.sessions.enabled()) {
         reaper_thread_ = std::thread([this]() { run_session_reaper(); });
     }
@@ -30,28 +53,13 @@ ServerRuntime::~ServerRuntime() {
     stop();
 }
 
-void ServerRuntime::prune_background_tasks_locked() {
-    auto it = background_tasks_.begin();
-    while (it != background_tasks_.end()) {
-        if (it->wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
-            ++it;
-            continue;
-        }
-
-        it->get();
-        it = background_tasks_.erase(it);
-    }
-}
-
 void ServerRuntime::stop() {
-    std::vector<std::future<void>> tasks;
     {
         std::lock_guard<std::mutex> lock(tasks_mutex_);
         if (stopping_) {
             return;
         }
         stopping_ = true;
-        tasks.swap(background_tasks_);
     }
 
     reaper_cv_.notify_all();
@@ -59,12 +67,10 @@ void ServerRuntime::stop() {
         reaper_thread_.join();
     }
 
+    continuation_executor_.stop();
+
     if (chat_service_) {
         chat_service_->stop();
-    }
-
-    for (auto& task : tasks) {
-        task.get();
     }
 }
 
@@ -75,6 +81,9 @@ MetricsSnapshot ServerRuntime::metrics_snapshot() const {
         .requests_cancelled_total = metrics_.requests_cancelled_total(),
         .requests_queue_rejected_total = metrics_.requests_queue_rejected_total(),
         .stream_disconnects_total = metrics_.stream_disconnects_total(),
+        .tool_invocations_total = metrics_.tool_invocations_total(),
+        .tool_failures_total = metrics_.tool_failures_total(),
+        .tool_timeouts_total = metrics_.tool_timeouts_total(),
         .active_sessions = chat_service_->session_health().active,
         .model_id = config_.model_id,
         .uptime_seconds = metrics_.uptime_seconds(),

@@ -33,7 +33,25 @@ ApiResult<void> reject_unknown_keys(const nlohmann::json& json, const char* cont
     return {};
 }
 
-ApiResult<zoo::Message> parse_message(const nlohmann::json& json, std::vector<zoo::Message>& seed) {
+ApiResult<MessageRole> parse_role(const std::string& role) {
+    if (role == "system") {
+        return MessageRole::System;
+    }
+    if (role == "user") {
+        return MessageRole::User;
+    }
+    if (role == "assistant") {
+        return MessageRole::Assistant;
+    }
+    if (role == "tool") {
+        return MessageRole::Tool;
+    }
+
+    return std::unexpected(
+        invalid_request_error("Unsupported message role: " + role, "messages", "invalid_role"));
+}
+
+ApiResult<ChatMessage> parse_message(const nlohmann::json& json, std::vector<ChatMessage>& seed) {
     static constexpr std::array<const char*, 3> kAllowedMessageKeys = {"role", "content",
                                                                        "tool_call_id"};
     if (auto unknown_keys = reject_unknown_keys(json, "message", kAllowedMessageKeys);
@@ -49,48 +67,51 @@ ApiResult<zoo::Message> parse_message(const nlohmann::json& json, std::vector<zo
             invalid_request_error("message.content must be a string", "messages"));
     }
 
-    const auto role = json.at("role").get<std::string>();
-    const auto content = json.at("content").get<std::string>();
+    const auto role_string = json.at("role").get<std::string>();
+    auto role = parse_role(role_string);
+    if (!role) {
+        return std::unexpected(role.error());
+    }
 
-    zoo::Message message = zoo::Message::user(content);
-    if (role == "system") {
-        if (json.contains("tool_call_id")) {
-            return std::unexpected(
-                invalid_request_error("tool_call_id is only valid for tool messages", "messages"));
-        }
-        message = zoo::Message::system(content);
-    } else if (role == "user") {
-        if (json.contains("tool_call_id")) {
-            return std::unexpected(
-                invalid_request_error("tool_call_id is only valid for tool messages", "messages"));
-        }
-        message = zoo::Message::user(content);
-    } else if (role == "assistant") {
-        if (json.contains("tool_call_id")) {
-            return std::unexpected(
-                invalid_request_error("tool_call_id is only valid for tool messages", "messages"));
-        }
-        message = zoo::Message::assistant(content);
-    } else if (role == "tool") {
+    const auto content = json.at("content").get<std::string>();
+    ChatMessage message = ChatMessage::user(content);
+
+    if (*role == MessageRole::Tool) {
         if (!json.contains("tool_call_id") || !json.at("tool_call_id").is_string()) {
             return std::unexpected(invalid_request_error(
                 "tool messages must include a string tool_call_id", "messages"));
         }
-        message = zoo::Message::tool(content, json.at("tool_call_id").get<std::string>());
+        message = ChatMessage::tool(content, json.at("tool_call_id").get<std::string>());
     } else {
-        return std::unexpected(
-            invalid_request_error("Unsupported message role: " + role, "messages", "invalid_role"));
+        if (json.contains("tool_call_id")) {
+            return std::unexpected(
+                invalid_request_error("tool_call_id is only valid for tool messages", "messages"));
+        }
+
+        switch (*role) {
+        case MessageRole::System:
+            message = ChatMessage::system(content);
+            break;
+        case MessageRole::User:
+            message = ChatMessage::user(content);
+            break;
+        case MessageRole::Assistant:
+            message = ChatMessage::assistant(content);
+            break;
+        case MessageRole::Tool:
+            break;
+        }
     }
 
-    if (auto validation = zoo::validate_role_sequence(seed, message.role); !validation) {
-        return std::unexpected(invalid_request_error(validation.error().message, "messages",
-                                                     "invalid_message_sequence"));
+    if (auto validation = validate_message_sequence(seed, message.role); !validation) {
+        return std::unexpected(
+            invalid_request_error(validation.error(), "messages", "invalid_message_sequence"));
     }
     seed.push_back(message);
     return message;
 }
 
-nlohmann::json make_tool_schema(const zoo::tools::ToolMetadata& metadata) {
+nlohmann::json make_tool_schema(const ToolDefinition& metadata) {
     return nlohmann::json{{"type", "function"},
                           {"function",
                            {{"name", metadata.name},
@@ -98,10 +119,10 @@ nlohmann::json make_tool_schema(const zoo::tools::ToolMetadata& metadata) {
                             {"parameters", metadata.parameters_schema}}}};
 }
 
-nlohmann::json make_tool_invocation_json(const zoo::ToolInvocation& inv) {
+nlohmann::json make_tool_invocation_json(const ToolInvocationRecord& inv) {
     nlohmann::json j{{"id", inv.id},
                      {"name", inv.name},
-                     {"status", zoo::to_string(inv.status)}};
+                     {"status", to_string(inv.status)}};
     try {
         j["arguments"] = nlohmann::json::parse(inv.arguments_json);
     } catch (...) {
@@ -121,7 +142,8 @@ nlohmann::json make_tool_invocation_json(const zoo::ToolInvocation& inv) {
 }
 
 nlohmann::json make_chat_completion_body(std::string_view completion_id, std::int64_t created,
-                                         std::string_view model_id, const zoo::Response& response) {
+                                         std::string_view model_id,
+                                         const CompletionResult& response) {
     nlohmann::json tool_invocations = nlohmann::json::array();
     for (const auto& inv : response.tool_invocations) {
         tool_invocations.push_back(make_tool_invocation_json(inv));
@@ -288,7 +310,7 @@ drogon::HttpResponsePtr make_models_response(std::string_view model_id) {
     });
 }
 
-drogon::HttpResponsePtr make_tools_response(const std::vector<zoo::tools::ToolMetadata>& tools) {
+drogon::HttpResponsePtr make_tools_response(const std::vector<ToolDefinition>& tools) {
     nlohmann::json data = nlohmann::json::array();
     for (const auto& metadata : tools) {
         data.push_back(make_tool_schema(metadata));
@@ -305,60 +327,54 @@ drogon::HttpResponsePtr make_session_response(const SessionSummary& summary,
 drogon::HttpResponsePtr make_chat_completion_response(std::string_view completion_id,
                                                       std::int64_t created,
                                                       std::string_view model_id,
-                                                      const zoo::Response& response) {
+                                                      const CompletionResult& response) {
     return make_json_response(
         make_chat_completion_body(completion_id, created, model_id, response));
 }
 
-ApiError map_zoo_error_to_api_error(const zoo::Error& error) {
-    using zoo::ErrorCode;
-
+ApiError map_runtime_error_to_api_error(const RuntimeError& error) {
     switch (error.code) {
-    // Configuration errors
-    case ErrorCode::InvalidConfig:
-    case ErrorCode::InvalidSamplingParams:
+    case RuntimeErrorCode::InvalidConfig:
+    case RuntimeErrorCode::InvalidSamplingParams:
         return invalid_request_error(error.message, std::nullopt, "invalid_config");
-    case ErrorCode::InvalidModelPath:
-    case ErrorCode::InvalidContextSize:
-    case ErrorCode::BackendInitFailed:
-    case ErrorCode::ModelLoadFailed:
+    case RuntimeErrorCode::InvalidModelPath:
+    case RuntimeErrorCode::InvalidContextSize:
+    case RuntimeErrorCode::BackendInitFailed:
+    case RuntimeErrorCode::ModelLoadFailed:
         return server_error(error.message, "model_load_failed");
-    // Backend errors
-    case ErrorCode::ContextCreationFailed:
+    case RuntimeErrorCode::ContextCreationFailed:
         return server_error(error.message, "context_creation_failed");
-    case ErrorCode::InferenceFailed:
+    case RuntimeErrorCode::InferenceFailed:
         return server_error(error.message, "inference_failed");
-    case ErrorCode::TokenizationFailed:
+    case RuntimeErrorCode::TokenizationFailed:
         return server_error(error.message, "tokenization_failed");
-    // Engine errors
-    case ErrorCode::ContextWindowExceeded:
+    case RuntimeErrorCode::ContextWindowExceeded:
         return invalid_request_error(error.message, "messages", "context_window_exceeded");
-    case ErrorCode::InvalidMessageSequence:
+    case RuntimeErrorCode::InvalidMessageSequence:
         return invalid_request_error(error.message, "messages", "invalid_message_sequence");
-    case ErrorCode::TemplateRenderFailed:
+    case RuntimeErrorCode::TemplateRenderFailed:
         return server_error(error.message, "template_render_failed");
-    // Runtime errors
-    case ErrorCode::AgentNotRunning:
-    case ErrorCode::RequestCancelled:
+    case RuntimeErrorCode::AgentNotRunning:
+    case RuntimeErrorCode::RequestCancelled:
         return service_unavailable_error(error.message, "agent_not_ready");
-    case ErrorCode::RequestTimeout:
+    case RuntimeErrorCode::RequestTimeout:
         return server_error(error.message, "request_timeout");
-    case ErrorCode::QueueFull:
+    case RuntimeErrorCode::QueueFull:
         return service_unavailable_error(error.message, "queue_full");
-    // Tool errors
-    case ErrorCode::ToolNotFound:
+    case RuntimeErrorCode::ToolNotFound:
         return invalid_request_error(error.message, std::nullopt, "tool_not_found");
-    case ErrorCode::ToolExecutionFailed:
-    case ErrorCode::InvalidToolSignature:
-    case ErrorCode::InvalidToolSchema:
-    case ErrorCode::ToolValidationFailed:
+    case RuntimeErrorCode::ToolExecutionFailed:
+    case RuntimeErrorCode::InvalidToolSignature:
+    case RuntimeErrorCode::InvalidToolSchema:
+    case RuntimeErrorCode::ToolValidationFailed:
         return server_error(error.message, "tool_execution_failed");
-    case ErrorCode::ToolRetriesExhausted:
-    case ErrorCode::ToolLoopLimitReached:
+    case RuntimeErrorCode::ToolRetriesExhausted:
+    case RuntimeErrorCode::ToolLoopLimitReached:
         return server_error(error.message, "tool_retries_exhausted");
-    default:
-        return server_error(error.to_string(), "runtime_error");
+    case RuntimeErrorCode::RuntimeFailure:
+        break;
     }
+    return server_error(error.message, "runtime_error");
 }
 
 } // namespace zks::server

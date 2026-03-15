@@ -84,6 +84,12 @@ Result<void> ServerConfig::validate() const {
     if (auto validation = sessions.validate(); !validation) {
         return std::unexpected(validation.error());
     }
+    for (const auto& tool : tools) {
+        if (auto validation = tool.validate(); !validation) {
+            return std::unexpected("tools entry '" + tool.name + "' is invalid: " +
+                                   validation.error());
+        }
+    }
     if (auto validation = zoo_config.validate(); !validation) {
         return std::unexpected(validation.error().to_string());
     }
@@ -103,8 +109,8 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
         return std::unexpected(with_path_context(path, error.what()));
     }
 
-    static constexpr std::array<const char*, 7> kAllowedKeys = {
-        "bind_address", "port", "model_id", "api_key", "http", "sessions", "zoo"};
+    static constexpr std::array<const char*, 8> kAllowedKeys = {
+        "bind_address", "port", "model_id", "api_key", "http", "sessions", "tools", "zoo"};
 
     if (auto unknown_key_check = reject_unknown_keys(json, "server config", kAllowedKeys);
         !unknown_key_check) {
@@ -174,6 +180,100 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
             }
             if (auto session_it = it->find("idle_ttl_seconds"); session_it != it->end()) {
                 session_it->get_to(config.sessions.idle_ttl_seconds);
+            }
+        }
+        if (auto it = json.find("tools"); it != json.end()) {
+            if (!it->is_array()) {
+                return std::unexpected(with_path_context(path, "tools must be an array"));
+            }
+
+            for (size_t index = 0; index < it->size(); ++index) {
+                const auto& tool_json = (*it)[index];
+                static constexpr std::array<const char*, 8> kAllowedToolKeys = {
+                    "name", "description", "parameters", "command", "working_directory", "env",
+                    "timeout_ms", "inherit_environment"};
+                if (auto unknown_keys =
+                        reject_unknown_keys(tool_json, "tool config", kAllowedToolKeys);
+                    !unknown_keys) {
+                    return std::unexpected(with_path_context(path, unknown_keys.error()));
+                }
+                if (!tool_json.contains("name") || !tool_json.at("name").is_string()) {
+                    return std::unexpected(with_path_context(
+                        path, "tools[" + std::to_string(index) + "].name must be a string"));
+                }
+                if (!tool_json.contains("description") || !tool_json.at("description").is_string()) {
+                    return std::unexpected(with_path_context(
+                        path,
+                        "tools[" + std::to_string(index) + "].description must be a string"));
+                }
+                if (!tool_json.contains("parameters") || !tool_json.at("parameters").is_object()) {
+                    return std::unexpected(with_path_context(
+                        path,
+                        "tools[" + std::to_string(index) + "].parameters must be an object"));
+                }
+                if (!tool_json.contains("command") || !tool_json.at("command").is_array()) {
+                    return std::unexpected(with_path_context(
+                        path, "tools[" + std::to_string(index) + "].command must be an array"));
+                }
+
+                CommandToolConfig tool;
+                tool.name = tool_json.at("name").get<std::string>();
+                tool.description = tool_json.at("description").get<std::string>();
+                tool.parameters_schema = tool_json.at("parameters");
+
+                for (const auto& arg_json : tool_json.at("command")) {
+                    if (!arg_json.is_string()) {
+                        return std::unexpected(with_path_context(
+                            path,
+                            "tools[" + std::to_string(index) +
+                                "].command entries must be strings"));
+                    }
+                    tool.command.push_back(arg_json.get<std::string>());
+                }
+
+                if (auto dir_it = tool_json.find("working_directory");
+                    dir_it != tool_json.end()) {
+                    if (!dir_it->is_string()) {
+                        return std::unexpected(with_path_context(
+                            path, "tools[" + std::to_string(index) +
+                                      "].working_directory must be a string"));
+                    }
+                    tool.working_directory = dir_it->get<std::string>();
+                }
+                if (auto env_it = tool_json.find("env"); env_it != tool_json.end()) {
+                    if (!env_it->is_object()) {
+                        return std::unexpected(with_path_context(
+                            path, "tools[" + std::to_string(index) + "].env must be an object"));
+                    }
+                    for (auto env_value = env_it->begin(); env_value != env_it->end(); ++env_value) {
+                        if (!env_value.value().is_string()) {
+                            return std::unexpected(with_path_context(
+                                path, "tools[" + std::to_string(index) +
+                                          "].env values must be strings"));
+                        }
+                        tool.env.emplace(env_value.key(), env_value.value().get<std::string>());
+                    }
+                }
+                if (auto inherit_it = tool_json.find("inherit_environment");
+                    inherit_it != tool_json.end()) {
+                    if (!inherit_it->is_boolean()) {
+                        return std::unexpected(with_path_context(
+                            path, "tools[" + std::to_string(index) +
+                                      "].inherit_environment must be a boolean"));
+                    }
+                    tool.inherit_environment = inherit_it->get<bool>();
+                }
+                if (auto timeout_it = tool_json.find("timeout_ms");
+                    timeout_it != tool_json.end()) {
+                    if (!timeout_it->is_number_unsigned()) {
+                        return std::unexpected(with_path_context(
+                            path,
+                            "tools[" + std::to_string(index) + "].timeout_ms must be a positive integer"));
+                    }
+                    tool.timeout_ms = timeout_it->get<std::uint32_t>();
+                }
+
+                config.tools.push_back(std::move(tool));
             }
         }
         if (!json.contains("zoo")) {

@@ -14,16 +14,13 @@
 #include <string_view>
 #include <unordered_map>
 
-#include <zoo/agent.hpp>
-
 namespace zks::server {
 
 class SessionManager {
   public:
-    using CompletionStarter = std::function<
-        zoo::RequestHandle(std::vector<zoo::Message>,
-                           std::optional<std::function<void(std::string_view)>>)>;
-    using RequestCanceler = std::function<void(zoo::RequestId)>;
+    using CompletionStarter =
+        std::function<CompletionHandle(std::vector<ChatMessage>, std::optional<TokenCallback>)>;
+    using RequestCanceler = std::function<void(std::uint64_t)>;
 
     SessionManager(std::string model_id, SessionConfig config, std::string base_system_prompt,
                    size_t max_history_messages, CompletionStarter completion_starter,
@@ -47,7 +44,7 @@ class SessionManager {
     struct SessionState {
         explicit SessionState(std::string session_id, std::string session_model,
                               std::int64_t created_at, std::int64_t expires_at_value,
-                              std::vector<zoo::Message> seeded_history)
+                              std::vector<ChatMessage> seeded_history)
             : id(std::move(session_id)), model(std::move(session_model)), created(created_at),
               last_used(created_at), expires_at(expires_at_value),
               history(std::move(seeded_history)) {}
@@ -57,8 +54,8 @@ class SessionManager {
         std::int64_t created = 0;
         std::int64_t last_used = 0;
         std::int64_t expires_at = 0;
-        std::vector<zoo::Message> history;
-        std::optional<zoo::RequestId> active_request;
+        std::vector<ChatMessage> history;
+        std::optional<std::uint64_t> active_request;
         bool closed = false;
         mutable std::mutex mutex;
     };
@@ -69,10 +66,10 @@ class SessionManager {
 
     void reap_expired_sessions_locked(std::int64_t now,
                                       std::vector<std::shared_ptr<SessionState>>& expired);
-    void finish_request(const std::shared_ptr<SessionState>& session, zoo::RequestId request_id);
-    void finish_request(const std::shared_ptr<SessionState>& session, zoo::RequestId request_id,
-                        const zoo::Message& user_message,
-                        const zoo::Expected<zoo::Response>& result);
+    void finish_request(const std::shared_ptr<SessionState>& session, std::uint64_t request_id);
+    void finish_request(const std::shared_ptr<SessionState>& session, std::uint64_t request_id,
+                        const ChatMessage& user_message,
+                        const RuntimeResult<CompletionResult>& result);
 
     std::string model_id_;
     SessionConfig config_;

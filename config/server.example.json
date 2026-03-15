@@ -12,6 +12,7 @@
     "max_sessions": 1,
     "idle_ttl_seconds": 900
   },
+  "tools": [],
   "zoo": {
     "model_path": "/path/to/your/model.gguf",
     "context_size": 2048,

@@ -1,8 +1,12 @@
 #include "server/chat_service.hpp"
 
+#include "server/zoo_adapter.hpp"
+
 #include <chrono>
-#include <iostream>
+#include <mutex>
 #include <utility>
+
+#include <zoo/agent.hpp>
 
 namespace zks::server {
 namespace {
@@ -10,6 +14,44 @@ namespace {
 struct ConfiguredAgent {
     std::unique_ptr<zoo::Agent> agent;
     std::string request_system_prompt;
+    std::vector<ToolDefinition> tool_definitions;
+};
+
+class ZooCompletionSource final : public CompletionSource {
+  public:
+    explicit ZooCompletionSource(std::future<zoo::Expected<zoo::Response>> future)
+        : future_(std::move(future)) {}
+
+    [[nodiscard]] std::future_status
+    wait_for(std::chrono::milliseconds timeout) const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (consumed_) {
+            return std::future_status::ready;
+        }
+        return future_.wait_for(timeout);
+    }
+
+    RuntimeResult<CompletionResult> get() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (consumed_) {
+            return std::unexpected(RuntimeError{
+                RuntimeErrorCode::RuntimeFailure,
+                "Completion result was already consumed",
+            });
+        }
+
+        consumed_ = true;
+        auto result = future_.get();
+        if (!result) {
+            return std::unexpected(from_zoo_error(result.error()));
+        }
+        return from_zoo_response(*result);
+    }
+
+  private:
+    mutable std::mutex mutex_;
+    mutable std::future<zoo::Expected<zoo::Response>> future_;
+    bool consumed_ = false;
 };
 
 std::string combine_system_prompts(const std::string& base_prompt,
@@ -21,6 +63,36 @@ std::string combine_system_prompts(const std::string& base_prompt,
         return base_prompt;
     }
     return base_prompt + "\n\n" + request_prompt;
+}
+
+ConfiguredAgent configure_tools(ConfiguredAgent configured, const ToolProvider& tools) {
+    configured.tool_definitions.reserve(tools.tools.size());
+
+    for (const auto& tool : tools.tools) {
+        auto register_result = configured.agent->register_tool(
+            tool.definition.name, tool.definition.description, tool.definition.parameters_schema,
+            [invoke = tool.invoke](const nlohmann::json& arguments) -> zoo::Expected<nlohmann::json> {
+                auto result = invoke(arguments);
+                if (!result) {
+                    return std::unexpected(to_zoo_error(result.error()));
+                }
+                return *result;
+            });
+        if (!register_result) {
+            throw std::runtime_error("Failed to register tool '" + tool.definition.name + "': " +
+                                     register_result.error().to_string());
+        }
+
+        configured.tool_definitions.push_back(tool.definition);
+    }
+
+    if (!configured.tool_definitions.empty()) {
+        configured.request_system_prompt =
+            configured.agent->build_tool_system_prompt(configured.request_system_prompt);
+        configured.agent->set_system_prompt(configured.request_system_prompt);
+    }
+
+    return configured;
 }
 
 Result<ConfiguredAgent> create_configured_agent(const zoo::Config& base_config,
@@ -37,24 +109,31 @@ Result<ConfiguredAgent> create_configured_agent(const zoo::Config& base_config,
         return std::unexpected("Failed to create zoo::Agent: " + agent_result.error().to_string());
     }
 
-    auto agent = std::move(*agent_result);
-    if (auto install_result = tools.install(*agent); !install_result) {
-        return std::unexpected(install_result.error());
-    }
+    ConfiguredAgent configured{
+        .agent = std::move(*agent_result),
+        .request_system_prompt = effective_prompt,
+        .tool_definitions = {},
+    };
 
-    std::string request_system_prompt = effective_prompt;
-    if (!tools.metadata.empty()) {
-        request_system_prompt = agent->build_tool_system_prompt(effective_prompt);
-        agent->set_system_prompt(request_system_prompt);
+    try {
+        return configure_tools(std::move(configured), tools);
+    } catch (const std::exception& error) {
+        return std::unexpected(error.what());
     }
-
-    return ConfiguredAgent{std::move(agent), std::move(request_system_prompt)};
 }
 
 std::int64_t now_seconds() {
     return std::chrono::duration_cast<std::chrono::seconds>(
                std::chrono::system_clock::now().time_since_epoch())
         .count();
+}
+
+CompletionHandle wrap_zoo_handle(zoo::RequestHandle handle) {
+    const auto request_id = static_cast<std::uint64_t>(handle.id);
+    return CompletionHandle{
+        request_id,
+        std::make_shared<ZooCompletionSource>(std::move(handle.future)),
+    };
 }
 
 } // namespace
@@ -64,7 +143,7 @@ Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfi
 }
 
 Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfig& config,
-                                                                ToolProvider tools) {
+                                                               ToolProvider tools) {
     auto shared_result = create_configured_agent(config.zoo_config, tools, std::nullopt);
     if (!shared_result) {
         return std::unexpected(shared_result.error());
@@ -75,28 +154,26 @@ Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfi
     auto session_manager = std::make_unique<SessionManager>(
         config.model_id, config.sessions, shared_result->request_system_prompt,
         config.zoo_config.max_history_messages,
-        [agent](std::vector<zoo::Message> messages,
-                std::optional<std::function<void(std::string_view)>> callback) {
-            return agent->complete(std::move(messages), std::move(callback));
+        [agent](std::vector<ChatMessage> messages, std::optional<TokenCallback> callback) {
+            return wrap_zoo_handle(agent->complete(to_zoo_messages(messages), std::move(callback)));
         },
-        [agent](zoo::RequestId request_id) {
-            if (agent) {
-                agent->cancel(request_id);
-            }
-        });
+        [agent](std::uint64_t request_id) { agent->cancel(static_cast<zoo::RequestId>(request_id)); });
 
     return std::make_shared<ZooChatService>(
         config.model_id, std::move(shared_result->request_system_prompt),
-        std::move(tools.metadata), std::move(shared_agent), std::move(session_manager));
+        std::move(shared_result->tool_definitions), std::move(shared_agent),
+        std::move(session_manager));
 }
 
 ZooChatService::ZooChatService(std::string model_id, std::string request_system_prompt,
-                               std::vector<zoo::tools::ToolMetadata> tool_metadata,
+                               std::vector<ToolDefinition> tool_metadata,
                                std::unique_ptr<zoo::Agent> shared_agent,
                                std::unique_ptr<SessionManager> session_manager)
     : model_id_(std::move(model_id)), request_system_prompt_(std::move(request_system_prompt)),
       tool_metadata_(std::move(tool_metadata)), agent_(std::move(shared_agent)),
       session_manager_(std::move(session_manager)) {}
+
+ZooChatService::~ZooChatService() = default;
 
 bool ZooChatService::is_ready() const noexcept {
     return static_cast<bool>(agent_) && agent_->is_running();
@@ -106,7 +183,7 @@ const std::string& ZooChatService::model_id() const noexcept {
     return model_id_;
 }
 
-const std::vector<zoo::tools::ToolMetadata>& ZooChatService::tools() const noexcept {
+const std::vector<ToolDefinition>& ZooChatService::tools() const noexcept {
     return tool_metadata_;
 }
 
@@ -116,7 +193,7 @@ SessionHealth ZooChatService::session_health() const noexcept {
 
 ApiResult<PendingChatCompletion>
 ZooChatService::start_completion(const ChatCompletionRequest& request,
-                                 std::optional<std::function<void(std::string_view)>> callback) {
+                                 std::optional<TokenCallback> callback) {
     if (request.session_id.has_value()) {
         return session_manager_->start_completion(request, next_completion_id_, std::move(callback));
     }
@@ -130,7 +207,8 @@ ZooChatService::start_completion(const ChatCompletionRequest& request,
             invalid_request_error("Unknown model: " + request.model, "model", "invalid_model"));
     }
 
-    auto handle = agent_->complete(prepare_messages(request), std::move(callback));
+    auto handle = wrap_zoo_handle(agent_->complete(to_zoo_messages(prepare_messages(request)),
+                                                   std::move(callback)));
     const auto request_id = handle.id;
     const auto created = now_seconds();
     const auto completion_id =
@@ -144,7 +222,7 @@ ZooChatService::start_completion(const ChatCompletionRequest& request,
         {},
         [agent = agent_.get(), request_id] {
             if (agent) {
-                agent->cancel(request_id);
+                agent->cancel(static_cast<zoo::RequestId>(request_id));
             }
         },
         std::make_shared<CompletionLease>(),
@@ -182,20 +260,21 @@ void ZooChatService::stop() {
     }
 }
 
-std::vector<zoo::Message>
+std::vector<ChatMessage>
 ZooChatService::prepare_messages(const ChatCompletionRequest& request) const {
     auto messages = request.messages;
     if (request_system_prompt_.empty()) {
         return messages;
     }
 
-    if (!messages.empty() && messages.front().role == zoo::Role::System) {
-        messages.front() = zoo::Message::system(
-            combine_system_prompts(request_system_prompt_, messages.front().content));
+    if (!messages.empty() && messages.front().role == MessageRole::System) {
+        messages.front() =
+            ChatMessage::system(combine_system_prompts(request_system_prompt_,
+                                                       messages.front().content));
         return messages;
     }
 
-    messages.insert(messages.begin(), zoo::Message::system(request_system_prompt_));
+    messages.insert(messages.begin(), ChatMessage::system(request_system_prompt_));
     return messages;
 }
 
