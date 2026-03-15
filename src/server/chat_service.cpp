@@ -12,7 +12,7 @@ namespace zks::server {
 namespace {
 
 struct ConfiguredAgent {
-    std::unique_ptr<zoo::Agent> agent;
+    std::shared_ptr<zoo::Agent> agent;
     std::string request_system_prompt;
     std::vector<ToolDefinition> tool_definitions;
 };
@@ -149,15 +149,16 @@ Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfi
         return std::unexpected(shared_result.error());
     }
 
-    auto shared_agent = std::move(shared_result->agent);
-    auto* agent = shared_agent.get();
+    std::shared_ptr<zoo::Agent> shared_agent = std::move(shared_result->agent);
     auto session_manager = std::make_unique<SessionManager>(
         config.model_id, config.sessions, shared_result->request_system_prompt,
         config.zoo_config.max_history_messages,
-        [agent](std::vector<ChatMessage> messages, std::optional<TokenCallback> callback) {
+        [agent = shared_agent](std::vector<ChatMessage> messages, std::optional<TokenCallback> callback) {
             return wrap_zoo_handle(agent->complete(to_zoo_messages(messages), std::move(callback)));
         },
-        [agent](std::uint64_t request_id) { agent->cancel(static_cast<zoo::RequestId>(request_id)); });
+        [agent = shared_agent](std::uint64_t request_id) {
+            agent->cancel(static_cast<zoo::RequestId>(request_id));
+        });
 
     return std::make_shared<ZooChatService>(
         config.model_id, std::move(shared_result->request_system_prompt),
@@ -167,7 +168,7 @@ Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfi
 
 ZooChatService::ZooChatService(std::string model_id, std::string request_system_prompt,
                                std::vector<ToolDefinition> tool_metadata,
-                               std::unique_ptr<zoo::Agent> shared_agent,
+                               std::shared_ptr<zoo::Agent> shared_agent,
                                std::unique_ptr<SessionManager> session_manager)
     : model_id_(std::move(model_id)), request_system_prompt_(std::move(request_system_prompt)),
       tool_metadata_(std::move(tool_metadata)), agent_(std::move(shared_agent)),
@@ -220,7 +221,7 @@ ZooChatService::start_completion(const ChatCompletionRequest& request,
         model_id_,
         std::move(handle),
         {},
-        [agent = agent_.get(), request_id] {
+        [agent = agent_, request_id] {
             if (agent) {
                 agent->cancel(static_cast<zoo::RequestId>(request_id));
             }
