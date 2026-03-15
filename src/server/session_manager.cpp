@@ -148,6 +148,10 @@ ApiResult<SessionSummary> SessionManager::create_session(const SessionCreateRequ
     }
 
     std::vector<std::shared_ptr<SessionState>> expired;
+    std::shared_ptr<SessionState> session;
+    std::string session_id;
+    bool capacity_reached = false;
+
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_) {
@@ -155,10 +159,19 @@ ApiResult<SessionSummary> SessionManager::create_session(const SessionCreateRequ
                 service_unavailable_error("Server runtime is stopping", "agent_not_ready"));
         }
 
-        reap_expired_sessions_locked(now_seconds(), expired);
+        const auto now = now_seconds();
+        reap_expired_sessions_locked(now, expired);
+
         if (sessions_.size() >= config_.max_sessions) {
-            return std::unexpected(service_unavailable_error(
-                "Session capacity reached", "session_capacity_reached"));
+            capacity_reached = true;
+        } else {
+            session_id =
+                "sess-" + std::to_string(next_session_id_.fetch_add(1, std::memory_order_relaxed));
+            const auto expires_at = now + static_cast<std::int64_t>(config_.idle_ttl_seconds);
+            session = std::make_shared<SessionState>(
+                session_id, model_id_, now, expires_at,
+                make_initial_history(base_system_prompt_, request.system_prompt));
+            sessions_.emplace(session_id, session);
         }
     }
 
@@ -166,32 +179,9 @@ ApiResult<SessionSummary> SessionManager::create_session(const SessionCreateRequ
         log_session_event("expired", expired_session->id, "idle timeout reached");
     }
 
-    const auto created = now_seconds();
-    const auto expires_at = created + static_cast<std::int64_t>(config_.idle_ttl_seconds);
-    const auto session_id =
-        "sess-" + std::to_string(next_session_id_.fetch_add(1, std::memory_order_relaxed));
-    auto session = std::make_shared<SessionState>(
-        session_id, model_id_, created, expires_at,
-        make_initial_history(base_system_prompt_, request.system_prompt));
-
-    expired.clear();
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (stopping_) {
-            return std::unexpected(
-                service_unavailable_error("Server runtime is stopping", "agent_not_ready"));
-        }
-
-        reap_expired_sessions_locked(created, expired);
-        if (sessions_.size() >= config_.max_sessions) {
-            return std::unexpected(service_unavailable_error(
-                "Session capacity reached", "session_capacity_reached"));
-        }
-        sessions_.emplace(session_id, session);
-    }
-
-    for (const auto& expired_session : expired) {
-        log_session_event("expired", expired_session->id, "idle timeout reached");
+    if (capacity_reached) {
+        return std::unexpected(service_unavailable_error(
+            "Session capacity reached", "session_capacity_reached"));
     }
 
     log_session_event("created", session_id, "session ready");
