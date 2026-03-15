@@ -1,25 +1,25 @@
-#include "doctest.h"
-
 #include "server/metrics.hpp"
 
-TEST_CASE("initial state — all counters at zero") {
+#include <gtest/gtest.h>
+
+TEST(MetricsTest, InitialStateAllZero) {
     zks::server::ServerMetrics metrics;
-    CHECK(metrics.requests_total() == 0);
-    CHECK(metrics.requests_errors() == 0);
-    CHECK(metrics.uptime_seconds() >= 0);
+    EXPECT_EQ(metrics.requests_total(), 0);
+    EXPECT_EQ(metrics.requests_errors(), 0);
+    EXPECT_GE(metrics.uptime_seconds(), 0);
 }
 
-TEST_CASE("new counters initial state") {
+TEST(MetricsTest, NewCountersInitialState) {
     zks::server::ServerMetrics metrics;
-    CHECK(metrics.requests_cancelled_total() == 0);
-    CHECK(metrics.requests_queue_rejected_total() == 0);
-    CHECK(metrics.stream_disconnects_total() == 0);
-    CHECK(metrics.tool_invocations_total() == 0);
-    CHECK(metrics.tool_failures_total() == 0);
-    CHECK(metrics.tool_timeouts_total() == 0);
+    EXPECT_EQ(metrics.requests_cancelled_total(), 0);
+    EXPECT_EQ(metrics.requests_queue_rejected_total(), 0);
+    EXPECT_EQ(metrics.stream_disconnects_total(), 0);
+    EXPECT_EQ(metrics.tool_invocations_total(), 0);
+    EXPECT_EQ(metrics.tool_failures_total(), 0);
+    EXPECT_EQ(metrics.tool_timeouts_total(), 0);
 }
 
-TEST_CASE("counter increments") {
+TEST(MetricsTest, CounterIncrements) {
     zks::server::ServerMetrics metrics;
     metrics.increment_requests();
     metrics.increment_requests();
@@ -36,17 +36,17 @@ TEST_CASE("counter increments") {
     metrics.increment_tool_failures();
     metrics.increment_tool_timeouts();
 
-    CHECK(metrics.requests_total() == 3);
-    CHECK(metrics.requests_errors() == 1);
-    CHECK(metrics.requests_cancelled_total() == 2);
-    CHECK(metrics.requests_queue_rejected_total() == 1);
-    CHECK(metrics.stream_disconnects_total() == 3);
-    CHECK(metrics.tool_invocations_total() == 2);
-    CHECK(metrics.tool_failures_total() == 1);
-    CHECK(metrics.tool_timeouts_total() == 1);
+    EXPECT_EQ(metrics.requests_total(), 3);
+    EXPECT_EQ(metrics.requests_errors(), 1);
+    EXPECT_EQ(metrics.requests_cancelled_total(), 2);
+    EXPECT_EQ(metrics.requests_queue_rejected_total(), 1);
+    EXPECT_EQ(metrics.stream_disconnects_total(), 3);
+    EXPECT_EQ(metrics.tool_invocations_total(), 2);
+    EXPECT_EQ(metrics.tool_failures_total(), 1);
+    EXPECT_EQ(metrics.tool_timeouts_total(), 1);
 }
 
-TEST_CASE("MetricsSnapshot fields are populated") {
+TEST(MetricsTest, SnapshotFieldsPopulated) {
     zks::server::MetricsSnapshot snapshot;
     snapshot.requests_total = 10;
     snapshot.requests_errors = 2;
@@ -60,15 +60,15 @@ TEST_CASE("MetricsSnapshot fields are populated") {
     snapshot.model_id = "test-model";
     snapshot.uptime_seconds = 42;
 
-    CHECK(snapshot.requests_total == 10);
-    CHECK(snapshot.requests_errors == 2);
-    CHECK(snapshot.requests_cancelled_total == 5);
-    CHECK(snapshot.requests_queue_rejected_total == 3);
-    CHECK(snapshot.stream_disconnects_total == 7);
-    CHECK(snapshot.tool_invocations_total == 8);
-    CHECK(snapshot.tool_failures_total == 4);
-    CHECK(snapshot.tool_timeouts_total == 2);
-    CHECK(snapshot.active_sessions == 3);
-    CHECK(snapshot.model_id == "test-model");
-    CHECK(snapshot.uptime_seconds == 42);
+    EXPECT_EQ(snapshot.requests_total, 10);
+    EXPECT_EQ(snapshot.requests_errors, 2);
+    EXPECT_EQ(snapshot.requests_cancelled_total, 5);
+    EXPECT_EQ(snapshot.requests_queue_rejected_total, 3);
+    EXPECT_EQ(snapshot.stream_disconnects_total, 7);
+    EXPECT_EQ(snapshot.tool_invocations_total, 8);
+    EXPECT_EQ(snapshot.tool_failures_total, 4);
+    EXPECT_EQ(snapshot.tool_timeouts_total, 2);
+    EXPECT_EQ(snapshot.active_sessions, 3);
+    EXPECT_EQ(snapshot.model_id, "test-model");
+    EXPECT_EQ(snapshot.uptime_seconds, 42);
 }

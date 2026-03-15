@@ -1,6 +1,6 @@
-#include "doctest.h"
-
 #include "server/session_manager.hpp"
+
+#include <gtest/gtest.h>
 
 #include <atomic>
 #include <future>
@@ -141,36 +141,36 @@ finish_pending(zks::server::PendingChatCompletion& pending,
 
 } // namespace
 
-TEST_CASE("create session and commit history") {
+TEST(SessionManagerTest, CreateSessionAndCommitHistory) {
     FakeExecutor executor;
     auto manager = make_session_manager(executor);
     std::atomic<std::uint64_t> next_completion_id{1};
 
     zks::server::SessionCreateRequest create_request{"local-model", "Session prompt"};
     auto created = manager->create_session(create_request);
-    REQUIRE(created.has_value());
-    CHECK(created->id == "sess-1");
-    CHECK(executor.request_count() == 0);
+    ASSERT_TRUE(created.has_value());
+    EXPECT_EQ(created->id, "sess-1");
+    EXPECT_EQ(executor.request_count(), 0u);
 
     auto pending = manager->start_completion(make_chat_request(created->id, "Hello"),
                                              next_completion_id);
-    REQUIRE(pending.has_value());
+    ASSERT_TRUE(pending.has_value());
 
     const std::vector<zks::server::ChatMessage> expected_first = {
         zks::server::ChatMessage::system("Base prompt\n\nSession prompt"),
         zks::server::ChatMessage::user("Hello"),
     };
-    CHECK(executor.request(0)->messages == expected_first);
+    EXPECT_EQ(executor.request(0)->messages, expected_first);
 
     zks::server::CompletionResult response;
     response.text = "Hi there";
     auto observed = finish_pending(*pending, executor.request(0), response);
-    REQUIRE(observed.has_value());
-    CHECK(observed->text == "Hi there");
+    ASSERT_TRUE(observed.has_value());
+    EXPECT_EQ(observed->text, "Hi there");
 
     auto second = manager->start_completion(make_chat_request(created->id, "Follow up"),
                                             next_completion_id);
-    REQUIRE(second.has_value());
+    ASSERT_TRUE(second.has_value());
 
     const std::vector<zks::server::ChatMessage> expected_second = {
         zks::server::ChatMessage::system("Base prompt\n\nSession prompt"),
@@ -178,147 +178,147 @@ TEST_CASE("create session and commit history") {
         zks::server::ChatMessage::assistant("Hi there"),
         zks::server::ChatMessage::user("Follow up"),
     };
-    CHECK(executor.request(1)->messages == expected_second);
+    EXPECT_EQ(executor.request(1)->messages, expected_second);
 
     response.text = "Second answer";
     observed = finish_pending(*second, executor.request(1), response);
-    REQUIRE(observed.has_value());
-    CHECK(observed->text == "Second answer");
+    ASSERT_TRUE(observed.has_value());
+    EXPECT_EQ(observed->text, "Second answer");
 }
 
-TEST_CASE("failed turn does not mutate history") {
+TEST(SessionManagerTest, FailedTurnDoesNotMutateHistory) {
     FakeExecutor executor;
     auto manager = make_session_manager(executor);
     std::atomic<std::uint64_t> next_completion_id{1};
 
     auto created = manager->create_session({"local-model", std::nullopt});
-    REQUIRE(created.has_value());
+    ASSERT_TRUE(created.has_value());
 
     auto pending = manager->start_completion(make_chat_request(created->id, "Hello"),
                                              next_completion_id);
-    REQUIRE(pending.has_value());
+    ASSERT_TRUE(pending.has_value());
 
     auto error = std::unexpected(zks::server::RuntimeError{
         zks::server::RuntimeErrorCode::InferenceFailed,
         "boom",
     });
     auto observed = finish_pending(*pending, executor.request(0), error);
-    CHECK_FALSE(observed.has_value());
+    EXPECT_FALSE(observed.has_value());
 
     auto retry = manager->start_completion(make_chat_request(created->id, "Retry"),
                                            next_completion_id);
-    REQUIRE(retry.has_value());
+    ASSERT_TRUE(retry.has_value());
 
     const std::vector<zks::server::ChatMessage> expected_retry = {
         zks::server::ChatMessage::system("Base prompt"),
         zks::server::ChatMessage::user("Retry"),
     };
-    CHECK(executor.request(1)->messages == expected_retry);
+    EXPECT_EQ(executor.request(1)->messages, expected_retry);
 
     zks::server::CompletionResult response;
     response.text = "Recovered";
     observed = finish_pending(*retry, executor.request(1), response);
-    REQUIRE(observed.has_value());
-    CHECK(observed->text == "Recovered");
+    ASSERT_TRUE(observed.has_value());
+    EXPECT_EQ(observed->text, "Recovered");
 }
 
-TEST_CASE("same session busy but different sessions can queue") {
+TEST(SessionManagerTest, SameSessionBusyDifferentSessionsCanQueue) {
     FakeExecutor executor;
     auto manager = make_session_manager(executor);
     std::atomic<std::uint64_t> next_completion_id{1};
 
     auto session_a = manager->create_session({"local-model", std::nullopt});
     auto session_b = manager->create_session({"local-model", "Other prompt"});
-    REQUIRE(session_a.has_value());
-    REQUIRE(session_b.has_value());
+    ASSERT_TRUE(session_a.has_value());
+    ASSERT_TRUE(session_b.has_value());
 
     auto first = manager->start_completion(make_chat_request(session_a->id, "A1"),
                                            next_completion_id);
-    REQUIRE(first.has_value());
+    ASSERT_TRUE(first.has_value());
 
     auto busy = manager->start_completion(make_chat_request(session_a->id, "A2"),
                                           next_completion_id);
-    REQUIRE_FALSE(busy.has_value());
-    CHECK(busy.error().http_status == 409);
+    ASSERT_FALSE(busy.has_value());
+    EXPECT_EQ(busy.error().http_status, 409);
 
     auto second = manager->start_completion(make_chat_request(session_b->id, "B1"),
                                             next_completion_id);
-    REQUIRE(second.has_value());
-    CHECK(executor.request_count() == 2);
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ(executor.request_count(), 2u);
 
     zks::server::CompletionResult response;
     response.text = "ok";
     auto observed = finish_pending(*first, executor.request(0), response);
-    REQUIRE(observed.has_value());
+    ASSERT_TRUE(observed.has_value());
     observed = finish_pending(*second, executor.request(1), response);
-    REQUIRE(observed.has_value());
+    ASSERT_TRUE(observed.has_value());
 }
 
-TEST_CASE("delete active session cancels request") {
+TEST(SessionManagerTest, DeleteActiveSessionCancelsRequest) {
     FakeExecutor executor;
     auto manager = make_session_manager(executor, "Base prompt", 64, 1);
     std::atomic<std::uint64_t> next_completion_id{1};
 
     auto created = manager->create_session({"local-model", std::nullopt});
-    REQUIRE(created.has_value());
+    ASSERT_TRUE(created.has_value());
 
     auto pending = manager->start_completion(make_chat_request(created->id, "Hello"),
                                              next_completion_id);
-    REQUIRE(pending.has_value());
+    ASSERT_TRUE(pending.has_value());
     auto submitted = executor.request(0);
 
     auto deleted = manager->delete_session(created->id);
-    REQUIRE(deleted.has_value());
-    CHECK(submitted->cancelled);
+    ASSERT_TRUE(deleted.has_value());
+    EXPECT_TRUE(submitted->cancelled);
 
     zks::server::CompletionResult response;
     response.text = "late answer";
     auto observed = finish_pending(*pending, submitted, response);
-    REQUIRE(observed.has_value());
-    CHECK(observed->text == "late answer");
+    ASSERT_TRUE(observed.has_value());
+    EXPECT_EQ(observed->text, "late answer");
 
     auto missing = manager->get_session(created->id);
-    REQUIRE_FALSE(missing.has_value());
-    CHECK(missing.error().http_status == 404);
+    ASSERT_FALSE(missing.has_value());
+    EXPECT_EQ(missing.error().http_status, 404);
 }
 
-TEST_CASE("session capacity is enforced") {
+TEST(SessionManagerTest, SessionCapacityEnforced) {
     FakeExecutor executor;
     auto manager = make_session_manager(executor, "Base prompt", 64, 1);
 
     auto first = manager->create_session({"local-model", std::nullopt});
-    REQUIRE(first.has_value());
+    ASSERT_TRUE(first.has_value());
 
     auto second = manager->create_session({"local-model", std::nullopt});
-    REQUIRE_FALSE(second.has_value());
-    CHECK(second.error().http_status == 503);
-    CHECK(second.error().code == std::optional<std::string>{"session_capacity_reached"});
+    ASSERT_FALSE(second.has_value());
+    EXPECT_EQ(second.error().http_status, 503);
+    EXPECT_EQ(second.error().code, std::optional<std::string>{"session_capacity_reached"});
 }
 
-TEST_CASE("history trims oldest turns") {
+TEST(SessionManagerTest, HistoryTrimsOldestTurns) {
     FakeExecutor executor;
     auto manager = make_session_manager(executor, "Base prompt", 2);
     std::atomic<std::uint64_t> next_completion_id{1};
 
     auto created = manager->create_session({"local-model", std::nullopt});
-    REQUIRE(created.has_value());
+    ASSERT_TRUE(created.has_value());
 
     auto first = manager->start_completion(make_chat_request(created->id, "One"),
                                            next_completion_id);
-    REQUIRE(first.has_value());
+    ASSERT_TRUE(first.has_value());
     zks::server::CompletionResult response;
     response.text = "One answer";
     finish_pending(*first, executor.request(0), response);
 
     auto second = manager->start_completion(make_chat_request(created->id, "Two"),
                                             next_completion_id);
-    REQUIRE(second.has_value());
+    ASSERT_TRUE(second.has_value());
     response.text = "Two answer";
     finish_pending(*second, executor.request(1), response);
 
     auto third = manager->start_completion(make_chat_request(created->id, "Three"),
                                            next_completion_id);
-    REQUIRE(third.has_value());
+    ASSERT_TRUE(third.has_value());
 
     const std::vector<zks::server::ChatMessage> expected = {
         zks::server::ChatMessage::system("Base prompt"),
@@ -326,7 +326,7 @@ TEST_CASE("history trims oldest turns") {
         zks::server::ChatMessage::assistant("Two answer"),
         zks::server::ChatMessage::user("Three"),
     };
-    CHECK(executor.request(2)->messages == expected);
+    EXPECT_EQ(executor.request(2)->messages, expected);
 
     response.text = "Three answer";
     finish_pending(*third, executor.request(2), response);

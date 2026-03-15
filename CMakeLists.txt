@@ -135,21 +135,32 @@ target_compile_features(zoo_keeper_live_smoke PRIVATE cxx_std_23)
 target_link_libraries(zoo_keeper_live_smoke PRIVATE ZooKeeper::zoo)
 
 if(BUILD_TESTING)
-    # --- doctest helper ---
+    # --- GoogleTest (fetched only when BUILD_TESTING=ON) ---
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.15.2
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(googletest)
+
+    # --- test helper ---
     function(zks_add_test TEST_NAME)
-        cmake_parse_arguments(ARG "NO_DOCTEST" "" "SOURCES;LIBS" ${ARGN})
+        cmake_parse_arguments(ARG "OWN_MAIN" "" "SOURCES;LIBS" ${ARGN})
         add_executable(zks_${TEST_NAME} ${ARG_SOURCES})
         target_compile_features(zks_${TEST_NAME} PRIVATE cxx_std_23)
-        target_include_directories(zks_${TEST_NAME} PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-        if(NOT ARG_NO_DOCTEST)
-            target_sources(zks_${TEST_NAME} PRIVATE tests/doctest_main.cpp)
+        if(ARG_OWN_MAIN)
+            target_link_libraries(zks_${TEST_NAME} PRIVATE
+                zks_server_core GTest::gtest ${ARG_LIBS})
+        else()
+            target_link_libraries(zks_${TEST_NAME} PRIVATE
+                zks_server_core GTest::gtest_main ${ARG_LIBS})
         endif()
-        target_link_libraries(zks_${TEST_NAME} PRIVATE zks_server_core ${ARG_LIBS})
         add_test(NAME ${TEST_NAME} COMMAND zks_${TEST_NAME})
     endfunction()
 
-    # --- Migrated tests ---
+    # --- Unit tests ---
     zks_add_test(config_parse_test SOURCES tests/config_test.cpp)
     zks_add_test(health_response_test SOURCES tests/health_test.cpp)
     zks_add_test(api_response_test SOURCES tests/api_test.cpp)
@@ -159,18 +170,19 @@ if(BUILD_TESTING)
     zks_add_test(metrics_test SOURCES tests/metrics_test.cpp)
     zks_add_test(http_integration_test SOURCES tests/http_integration_test.cpp)
     set_tests_properties(http_integration_test PROPERTIES TIMEOUT 30)
+    zks_add_test(streaming_test SOURCES tests/streaming_test.cpp)
+    zks_add_test(executor_test SOURCES tests/executor_test.cpp)
+    zks_add_test(zoo_adapter_test SOURCES tests/zoo_adapter_test.cpp)
 
     # tool_test_helper is a subprocess, not a test itself
     add_executable(zks_tool_test_helper tests/tool_test_helper.cpp)
     target_compile_features(zks_tool_test_helper PRIVATE cxx_std_23)
     target_link_libraries(zks_tool_test_helper PRIVATE zks_server_core)
 
-    # command_tools_test has its own main (NO_DOCTEST) and passes helper path via argv
+    # command_tools_test has its own main (OWN_MAIN) and passes helper path via argv
     add_executable(zks_command_tools_test tests/command_tools_test.cpp)
     target_compile_features(zks_command_tools_test PRIVATE cxx_std_23)
-    target_include_directories(zks_command_tools_test PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-    target_link_libraries(zks_command_tools_test PRIVATE zks_server_core)
+    target_link_libraries(zks_command_tools_test PRIVATE zks_server_core GTest::gtest)
     add_test(
         NAME command_tools_test
         COMMAND zks_command_tools_test $<TARGET_FILE:zks_tool_test_helper>
@@ -180,12 +192,7 @@ if(BUILD_TESTING)
         zks_add_test(test_ui_response_test SOURCES tests/test_ui_test.cpp)
     endif()
 
-    # --- New tests ---
-    zks_add_test(streaming_test SOURCES tests/streaming_test.cpp)
-    zks_add_test(executor_test SOURCES tests/executor_test.cpp)
-    zks_add_test(zoo_adapter_test SOURCES tests/zoo_adapter_test.cpp)
-
-    # --- Non-doctest tests ---
+    # --- Non-GTest tests ---
     add_test(NAME baseline_link_smoke COMMAND zoo_keeper_link_smoke)
     set_tests_properties(baseline_link_smoke PROPERTIES
         PASS_REGULAR_EXPRESSION "Observed expected InvalidModelPath validation failure."

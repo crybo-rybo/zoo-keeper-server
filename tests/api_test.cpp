@@ -1,7 +1,7 @@
-#include "doctest.h"
-
 #include "server/api_json.hpp"
 #include "server/streaming.hpp"
+
+#include <gtest/gtest.h>
 
 #include <chrono>
 #include <string>
@@ -16,52 +16,52 @@ nlohmann::json parse_body(const drogon::HttpResponsePtr& response) {
 
 } // namespace
 
-TEST_CASE("parse valid chat completion request") {
+TEST(ApiTest, ParseValidChatCompletionRequest) {
     auto parsed = zks::server::parse_chat_completion_request(
         R"json({"model":"local-model","session_id":"sess-1","messages":[{"role":"system","content":"Be brief."},{"role":"user","content":"Hello"}],"stream":true})json");
-    REQUIRE(parsed.has_value());
-    CHECK(parsed->model == "local-model");
-    CHECK(parsed->stream);
-    CHECK(parsed->messages.size() == 2);
-    CHECK(parsed->session_id == std::optional<std::string>{"sess-1"});
-    CHECK(parsed->messages[0].role == zks::server::MessageRole::System);
-    CHECK(parsed->messages[1].role == zks::server::MessageRole::User);
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->model, "local-model");
+    EXPECT_TRUE(parsed->stream);
+    EXPECT_EQ(parsed->messages.size(), 2u);
+    EXPECT_EQ(parsed->session_id, std::optional<std::string>{"sess-1"});
+    EXPECT_EQ(parsed->messages[0].role, zks::server::MessageRole::System);
+    EXPECT_EQ(parsed->messages[1].role, zks::server::MessageRole::User);
 }
 
-TEST_CASE("unknown request field rejected") {
+TEST(ApiTest, UnknownRequestFieldRejected) {
     auto parsed = zks::server::parse_chat_completion_request(
         R"json({"model":"local-model","messages":[{"role":"user","content":"Hello"}],"temperature":0.2})json");
-    REQUIRE_FALSE(parsed.has_value());
-    CHECK(parsed.error().http_status == 400);
-    CHECK(parsed.error().code == std::optional<std::string>{"unknown_field"});
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().http_status, 400);
+    EXPECT_EQ(parsed.error().code, std::optional<std::string>{"unknown_field"});
 }
 
-TEST_CASE("tool message without tool_call_id rejected") {
+TEST(ApiTest, ToolMessageWithoutCallIdRejected) {
     auto parsed = zks::server::parse_chat_completion_request(
         R"json({"model":"local-model","messages":[{"role":"tool","content":"42"}]})json");
-    REQUIRE_FALSE(parsed.has_value());
-    CHECK(parsed.error().http_status == 400);
-    CHECK(parsed.error().param == std::optional<std::string>{"messages"});
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().http_status, 400);
+    EXPECT_EQ(parsed.error().param, std::optional<std::string>{"messages"});
 }
 
-TEST_CASE("parse valid session create request") {
+TEST(ApiTest, ParseValidSessionCreateRequest) {
     auto parsed = zks::server::parse_session_create_request(
         R"json({"model":"local-model","system_prompt":"Be concise."})json");
-    REQUIRE(parsed.has_value());
-    CHECK(parsed->model == "local-model");
-    CHECK(parsed->system_prompt == std::optional<std::string>{"Be concise."});
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->model, "local-model");
+    EXPECT_EQ(parsed->system_prompt, std::optional<std::string>{"Be concise."});
 }
 
-TEST_CASE("models response") {
+TEST(ApiTest, ModelsResponse) {
     auto response = zks::server::make_models_response("local-model");
     const auto json = parse_body(response);
-    CHECK(response->getStatusCode() == drogon::k200OK);
-    CHECK(json.at("object") == "list");
-    CHECK(json.at("data").size() == 1);
-    CHECK(json.at("data")[0].at("id") == "local-model");
+    EXPECT_EQ(response->getStatusCode(), drogon::k200OK);
+    EXPECT_EQ(json.at("object"), "list");
+    EXPECT_EQ(json.at("data").size(), 1u);
+    EXPECT_EQ(json.at("data")[0].at("id"), "local-model");
 }
 
-TEST_CASE("tools response") {
+TEST(ApiTest, ToolsResponse) {
     zks::server::ToolDefinition tool;
     tool.name = "search_documents";
     tool.description = "Search local documents.";
@@ -71,24 +71,24 @@ TEST_CASE("tools response") {
 
     auto response = zks::server::make_tools_response({tool});
     const auto json = parse_body(response);
-    CHECK(response->getStatusCode() == drogon::k200OK);
-    CHECK(json.at("object") == "list");
-    CHECK(json.at("data").size() == 1);
-    CHECK(json.at("data")[0].at("function").at("name") == "search_documents");
+    EXPECT_EQ(response->getStatusCode(), drogon::k200OK);
+    EXPECT_EQ(json.at("object"), "list");
+    EXPECT_EQ(json.at("data").size(), 1u);
+    EXPECT_EQ(json.at("data")[0].at("function").at("name"), "search_documents");
 }
 
-TEST_CASE("session response") {
+TEST(ApiTest, SessionResponse) {
     const auto response = zks::server::make_session_response(
         zks::server::SessionSummary{"sess-1", "local-model", 10, 11, 20}, drogon::k201Created);
     const auto json = parse_body(response);
-    CHECK(response->getStatusCode() == drogon::k201Created);
-    CHECK(json.at("object") == "session");
-    CHECK(json.at("id") == "sess-1");
-    CHECK(json.at("model") == "local-model");
-    CHECK(json.at("expires_at") == 20);
+    EXPECT_EQ(response->getStatusCode(), drogon::k201Created);
+    EXPECT_EQ(json.at("object"), "session");
+    EXPECT_EQ(json.at("id"), "sess-1");
+    EXPECT_EQ(json.at("model"), "local-model");
+    EXPECT_EQ(json.at("expires_at"), 20);
 }
 
-TEST_CASE("chat completion response") {
+TEST(ApiTest, ChatCompletionResponse) {
     zks::server::CompletionResult response;
     response.text = "Hello from the server.";
     response.usage.prompt_tokens = 12;
@@ -101,73 +101,73 @@ TEST_CASE("chat completion response") {
     auto http_response = zks::server::make_chat_completion_response("chatcmpl-1", 1234567890,
                                                                     "local-model", response);
     const auto json = parse_body(http_response);
-    CHECK(http_response->getStatusCode() == drogon::k200OK);
-    CHECK(json.at("id") == "chatcmpl-1");
-    CHECK(json.at("object") == "chat.completion");
-    CHECK(json.at("model") == "local-model");
-    CHECK(json.at("choices")[0].at("message").at("content") == "Hello from the server.");
-    CHECK(json.at("usage").at("total_tokens") == 16);
-    REQUIRE(json.contains("zoo_metrics"));
-    CHECK(json.at("zoo_metrics").at("latency_ms") == 1240);
-    CHECK(json.at("zoo_metrics").at("time_to_first_token_ms") == 180);
-    CHECK(json.at("zoo_metrics").at("tokens_per_second") == 22.4);
+    EXPECT_EQ(http_response->getStatusCode(), drogon::k200OK);
+    EXPECT_EQ(json.at("id"), "chatcmpl-1");
+    EXPECT_EQ(json.at("object"), "chat.completion");
+    EXPECT_EQ(json.at("model"), "local-model");
+    EXPECT_EQ(json.at("choices")[0].at("message").at("content"), "Hello from the server.");
+    EXPECT_EQ(json.at("usage").at("total_tokens"), 16);
+    ASSERT_TRUE(json.contains("zoo_metrics"));
+    EXPECT_EQ(json.at("zoo_metrics").at("latency_ms"), 1240);
+    EXPECT_EQ(json.at("zoo_metrics").at("time_to_first_token_ms"), 180);
+    EXPECT_EQ(json.at("zoo_metrics").at("tokens_per_second"), 22.4);
 }
 
-TEST_CASE("runtime error to API error mapping") {
+TEST(ApiTest, RuntimeErrorToApiErrorMapping) {
     auto queue_full = zks::server::map_runtime_error_to_api_error(
         zks::server::RuntimeError{zks::server::RuntimeErrorCode::QueueFull, "queue full"});
-    CHECK(queue_full.http_status == 503);
-    CHECK(queue_full.type == "service_unavailable_error");
-    CHECK(queue_full.code == std::optional<std::string>{"queue_full"});
+    EXPECT_EQ(queue_full.http_status, 503);
+    EXPECT_EQ(queue_full.type, "service_unavailable_error");
+    EXPECT_EQ(queue_full.code, std::optional<std::string>{"queue_full"});
 
     auto invalid_sequence = zks::server::map_runtime_error_to_api_error(
         zks::server::RuntimeError{zks::server::RuntimeErrorCode::InvalidMessageSequence,
                                   "bad sequence"});
-    CHECK(invalid_sequence.http_status == 400);
-    CHECK(invalid_sequence.type == "invalid_request_error");
+    EXPECT_EQ(invalid_sequence.http_status, 400);
+    EXPECT_EQ(invalid_sequence.type, "invalid_request_error");
 
     auto model_load_failed = zks::server::map_runtime_error_to_api_error(
         zks::server::RuntimeError{zks::server::RuntimeErrorCode::ModelLoadFailed,
                                   "model not found"});
-    CHECK(model_load_failed.http_status == 500);
-    CHECK(model_load_failed.type == "server_error");
-    CHECK(model_load_failed.code == std::optional<std::string>{"model_load_failed"});
+    EXPECT_EQ(model_load_failed.http_status, 500);
+    EXPECT_EQ(model_load_failed.type, "server_error");
+    EXPECT_EQ(model_load_failed.code, std::optional<std::string>{"model_load_failed"});
 
     auto inference_failed = zks::server::map_runtime_error_to_api_error(
         zks::server::RuntimeError{zks::server::RuntimeErrorCode::InferenceFailed,
                                   "decode failed"});
-    CHECK(inference_failed.http_status == 500);
-    CHECK(inference_failed.code == std::optional<std::string>{"inference_failed"});
+    EXPECT_EQ(inference_failed.http_status, 500);
+    EXPECT_EQ(inference_failed.code, std::optional<std::string>{"inference_failed"});
 
     auto tool_not_found = zks::server::map_runtime_error_to_api_error(
         zks::server::RuntimeError{zks::server::RuntimeErrorCode::ToolNotFound, "unknown tool"});
-    CHECK(tool_not_found.http_status == 400);
-    CHECK(tool_not_found.type == "invalid_request_error");
-    CHECK(tool_not_found.code == std::optional<std::string>{"tool_not_found"});
+    EXPECT_EQ(tool_not_found.http_status, 400);
+    EXPECT_EQ(tool_not_found.type, "invalid_request_error");
+    EXPECT_EQ(tool_not_found.code, std::optional<std::string>{"tool_not_found"});
 
     auto tool_retries = zks::server::map_runtime_error_to_api_error(
         zks::server::RuntimeError{zks::server::RuntimeErrorCode::ToolRetriesExhausted,
                                   "retries exceeded"});
-    CHECK(tool_retries.http_status == 500);
-    CHECK(tool_retries.type == "server_error");
-    CHECK(tool_retries.code == std::optional<std::string>{"tool_retries_exhausted"});
+    EXPECT_EQ(tool_retries.http_status, 500);
+    EXPECT_EQ(tool_retries.type, "server_error");
+    EXPECT_EQ(tool_retries.code, std::optional<std::string>{"tool_retries_exhausted"});
 
     auto template_failed = zks::server::map_runtime_error_to_api_error(
         zks::server::RuntimeError{zks::server::RuntimeErrorCode::TemplateRenderFailed,
                                   "render error"});
-    CHECK(template_failed.http_status == 500);
-    CHECK(template_failed.code == std::optional<std::string>{"template_render_failed"});
+    EXPECT_EQ(template_failed.http_status, 500);
+    EXPECT_EQ(template_failed.code, std::optional<std::string>{"template_render_failed"});
 
     auto missing_session = zks::server::not_found_error("missing", "session_not_found");
-    CHECK(missing_session.http_status == 404);
-    CHECK(missing_session.type == "not_found_error");
+    EXPECT_EQ(missing_session.http_status, 404);
+    EXPECT_EQ(missing_session.type, "not_found_error");
 
     auto busy = zks::server::conflict_error("busy", "session_busy");
-    CHECK(busy.http_status == 409);
-    CHECK(busy.type == "conflict_error");
+    EXPECT_EQ(busy.http_status, 409);
+    EXPECT_EQ(busy.type, "conflict_error");
 }
 
-TEST_CASE("chat completion response with tool invocations") {
+TEST(ApiTest, ChatCompletionResponseWithToolInvocations) {
     zks::server::CompletionResult response;
     response.text = "I used a tool for that.";
 
@@ -182,36 +182,36 @@ TEST_CASE("chat completion response with tool invocations") {
     auto http_response = zks::server::make_chat_completion_response("chatcmpl-2", 1234567890,
                                                                     "local-model", response);
     const auto json = parse_body(http_response);
-    REQUIRE(json.contains("tool_invocations"));
-    REQUIRE(json.at("tool_invocations").size() == 1);
+    ASSERT_TRUE(json.contains("tool_invocations"));
+    ASSERT_EQ(json.at("tool_invocations").size(), 1u);
     const auto& tool_inv = json.at("tool_invocations")[0];
-    CHECK(tool_inv.at("id") == "call-1");
-    CHECK(tool_inv.at("name") == "search_documents");
-    CHECK(tool_inv.at("status") == "succeeded");
-    CHECK(tool_inv.contains("result"));
-    CHECK(tool_inv.contains("arguments"));
+    EXPECT_EQ(tool_inv.at("id"), "call-1");
+    EXPECT_EQ(tool_inv.at("name"), "search_documents");
+    EXPECT_EQ(tool_inv.at("status"), "succeeded");
+    EXPECT_TRUE(tool_inv.contains("result"));
+    EXPECT_TRUE(tool_inv.contains("arguments"));
 }
 
-TEST_CASE("empty tool_invocations is an empty array") {
+TEST(ApiTest, EmptyToolInvocationsIsEmptyArray) {
     zks::server::CompletionResult empty_response;
     auto http_empty = zks::server::make_chat_completion_response("chatcmpl-3", 1234567890,
                                                                  "local-model", empty_response);
     const auto json = parse_body(http_empty);
-    REQUIRE(json.contains("tool_invocations"));
-    CHECK(json.at("tool_invocations").is_array());
-    CHECK(json.at("tool_invocations").size() == 0);
+    ASSERT_TRUE(json.contains("tool_invocations"));
+    EXPECT_TRUE(json.at("tool_invocations").is_array());
+    EXPECT_EQ(json.at("tool_invocations").size(), 0u);
 }
 
-TEST_CASE("streaming chunk format") {
+TEST(ApiTest, StreamingChunkFormat) {
     const auto chunk = zks::server::make_chat_completion_chunk(
         "chatcmpl-1", 1234567890, "local-model", "Hello", true, std::nullopt);
     const auto finish = zks::server::make_chat_completion_chunk(
         "chatcmpl-1", 1234567890, "local-model", std::nullopt, false, "stop");
     const auto done = zks::server::make_sse_done();
 
-    CHECK(chunk.find("data: ") == 0);
-    CHECK(chunk.find("\"role\":\"assistant\"") != std::string::npos);
-    CHECK(chunk.find("\"content\":\"Hello\"") != std::string::npos);
-    CHECK(finish.find("\"finish_reason\":\"stop\"") != std::string::npos);
-    CHECK(done == "data: [DONE]\n\n");
+    EXPECT_EQ(chunk.find("data: "), 0u);
+    EXPECT_NE(chunk.find("\"role\":\"assistant\""), std::string::npos);
+    EXPECT_NE(chunk.find("\"content\":\"Hello\""), std::string::npos);
+    EXPECT_NE(finish.find("\"finish_reason\":\"stop\""), std::string::npos);
+    EXPECT_EQ(done, "data: [DONE]\n\n");
 }

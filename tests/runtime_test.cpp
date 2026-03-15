@@ -1,8 +1,8 @@
-#include "doctest.h"
-
 #include "server/runtime.hpp"
 
 #include "fake_chat_service.hpp"
+
+#include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
@@ -23,7 +23,7 @@ struct Probe {
 
 } // namespace
 
-TEST_CASE("ServerRuntime stop drains background tasks") {
+TEST(RuntimeTest, StopDrainsBackgroundTasks) {
     auto chat_service = std::make_shared<FakeChatService>();
     chat_service->set_model_id("runtime-test-model");
     zks::server::ServerConfig config;
@@ -40,7 +40,7 @@ TEST_CASE("ServerRuntime stop drains background tasks") {
         started->store(true, std::memory_order_release);
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     });
-    REQUIRE(submitted);
+    ASSERT_TRUE(submitted);
 
     while (!started->load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -48,9 +48,9 @@ TEST_CASE("ServerRuntime stop drains background tasks") {
 
     runtime->stop();
 
-    CHECK(chat_service->stop_calls() == 1);
-    CHECK(destroyed->load(std::memory_order_relaxed) == 1);
+    EXPECT_EQ(chat_service->stop_calls(), 1);
+    EXPECT_EQ(destroyed->load(std::memory_order_relaxed), 1);
 
     runtime->stop();
-    CHECK(chat_service->stop_calls() == 1);
+    EXPECT_EQ(chat_service->stop_calls(), 1);
 }

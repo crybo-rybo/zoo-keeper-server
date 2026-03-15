@@ -1,6 +1,6 @@
-#include "doctest.h"
-
 #include "server/executor.hpp"
+
+#include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
@@ -15,60 +15,55 @@ constexpr auto kTimeout = std::chrono::seconds(5);
 void busy_wait(const std::atomic<bool>& flag) {
     auto deadline = std::chrono::steady_clock::now() + kTimeout;
     while (!flag.load(std::memory_order_acquire)) {
-        if (std::chrono::steady_clock::now() > deadline) {
-            FAIL("Timed out waiting for flag");
-        }
+        ASSERT_LT(std::chrono::steady_clock::now(), deadline) << "Timed out waiting for flag";
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
 } // namespace
 
-TEST_CASE("submit runs task on worker thread") {
+TEST(ExecutorTest, SubmitRunsTaskOnWorkerThread) {
     zks::server::BoundedExecutor executor(1, 4);
     std::atomic<bool> ran{false};
 
     auto result = executor.submit([&ran] {
         ran.store(true, std::memory_order_release);
     });
-    CHECK(result.has_value());
+    ASSERT_TRUE(result.has_value());
 
     busy_wait(ran);
-    CHECK(ran.load());
+    EXPECT_TRUE(ran.load());
 }
 
-TEST_CASE("submit returns error after stop") {
+TEST(ExecutorTest, SubmitReturnsErrorAfterStop) {
     zks::server::BoundedExecutor executor(1, 4);
     executor.stop();
 
     auto result = executor.submit([] {});
-    REQUIRE_FALSE(result.has_value());
-    CHECK(result.error().find("stop") != std::string::npos);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().find("stop"), std::string::npos);
 }
 
-TEST_CASE("submit returns error when queue is full") {
+TEST(ExecutorTest, SubmitReturnsErrorWhenQueueFull) {
     zks::server::BoundedExecutor executor(1, 1);
     std::latch blocker(1);
 
-    // Fill the worker with a blocking task
     auto r1 = executor.submit([&blocker] { blocker.wait(); });
-    CHECK(r1.has_value());
+    ASSERT_TRUE(r1.has_value());
 
     // Give worker time to pick up the task
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    // Fill the single pending slot
     auto r2 = executor.submit([] {});
-    CHECK(r2.has_value());
+    ASSERT_TRUE(r2.has_value());
 
-    // Queue should now be full
     auto r3 = executor.submit([] {});
-    CHECK_FALSE(r3.has_value());
+    EXPECT_FALSE(r3.has_value());
 
     blocker.count_down();
 }
 
-TEST_CASE("stop waits for running tasks to complete") {
+TEST(ExecutorTest, StopWaitsForRunningTasks) {
     std::atomic<int> counter{0};
     {
         zks::server::BoundedExecutor executor(4, 8);
@@ -80,27 +75,27 @@ TEST_CASE("stop waits for running tasks to complete") {
         }
         executor.stop();
     }
-    CHECK(counter.load() == 4);
+    EXPECT_EQ(counter.load(), 4);
 }
 
-TEST_CASE("stop is idempotent") {
+TEST(ExecutorTest, StopIsIdempotent) {
     zks::server::BoundedExecutor executor(1, 1);
     executor.stop();
     executor.stop(); // should not crash
 }
 
-TEST_CASE("destructor calls stop") {
+TEST(ExecutorTest, DestructorCallsStop) {
     std::atomic<bool> ran{false};
     {
         zks::server::BoundedExecutor executor(1, 4);
         executor.submit([&ran] {
             ran.store(true, std::memory_order_release);
         });
-    } // destructor runs here
-    CHECK(ran.load());
+    }
+    EXPECT_TRUE(ran.load());
 }
 
-TEST_CASE("worker_count=0 normalizes to 1") {
+TEST(ExecutorTest, WorkerCountZeroNormalizesToOne) {
     zks::server::BoundedExecutor executor(0, 4);
     std::atomic<bool> ran{false};
 
@@ -108,10 +103,10 @@ TEST_CASE("worker_count=0 normalizes to 1") {
         ran.store(true, std::memory_order_release);
     });
     busy_wait(ran);
-    CHECK(ran.load());
+    EXPECT_TRUE(ran.load());
 }
 
-TEST_CASE("max_pending_tasks=0 normalizes to 1") {
+TEST(ExecutorTest, MaxPendingTasksZeroNormalizesToOne) {
     zks::server::BoundedExecutor executor(1, 0);
     std::atomic<bool> ran{false};
 
@@ -119,15 +114,14 @@ TEST_CASE("max_pending_tasks=0 normalizes to 1") {
         ran.store(true, std::memory_order_release);
     });
     busy_wait(ran);
-    CHECK(ran.load());
+    EXPECT_TRUE(ran.load());
 }
 
-TEST_CASE("exceptions in tasks do not kill workers") {
+TEST(ExecutorTest, ExceptionsInTasksDoNotKillWorkers) {
     zks::server::BoundedExecutor executor(1, 4);
 
     executor.submit([] { throw std::runtime_error("intentional"); });
 
-    // Give worker time to process the throwing task
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     std::atomic<bool> ran{false};
@@ -135,5 +129,5 @@ TEST_CASE("exceptions in tasks do not kill workers") {
         ran.store(true, std::memory_order_release);
     });
     busy_wait(ran);
-    CHECK(ran.load());
+    EXPECT_TRUE(ran.load());
 }
