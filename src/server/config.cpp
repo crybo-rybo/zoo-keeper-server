@@ -1,5 +1,7 @@
 #include "server/config.hpp"
 
+#include "server/internal_utils.hpp"
+
 #include <array>
 #include <fstream>
 #include <sstream>
@@ -14,29 +16,6 @@ namespace {
 bool is_trusted_local_bind_address(std::string_view bind_address) {
     return bind_address == "localhost" || bind_address == "::1" ||
            bind_address.starts_with("127.");
-}
-
-template <size_t N>
-Result<void> reject_unknown_keys(const nlohmann::json& json, const char* context,
-                                 const std::array<const char*, N>& allowed_keys) {
-    if (!json.is_object()) {
-        return std::unexpected(std::string(context) + " must be a JSON object");
-    }
-
-    for (auto it = json.begin(); it != json.end(); ++it) {
-        bool allowed = false;
-        for (const char* key : allowed_keys) {
-            if (it.key() == key) {
-                allowed = true;
-                break;
-            }
-        }
-        if (!allowed) {
-            return std::unexpected("Unknown " + std::string(context) + " key: " + it.key());
-        }
-    }
-
-    return {};
 }
 
 std::string with_path_context(const std::filesystem::path& path, const std::string& message) {
@@ -109,7 +88,7 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
         return std::unexpected(with_path_context(path, error.what()));
     }
 
-    static constexpr std::array<const char*, 8> kAllowedKeys = {
+    static constexpr std::array<std::string_view, 8> kAllowedKeys = {
         "bind_address", "port", "model_id", "api_key", "http", "sessions", "tools", "zoo"};
 
     if (auto unknown_key_check = reject_unknown_keys(json, "server config", kAllowedKeys);
@@ -145,7 +124,7 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
             }
         }
         if (auto it = json.find("http"); it != json.end()) {
-            static constexpr std::array<const char*, 3> kAllowedHttpKeys = {
+            static constexpr std::array<std::string_view, 3> kAllowedHttpKeys = {
                 "client_max_body_size_bytes", "client_max_memory_body_size_bytes",
                 "idle_connection_timeout_seconds"};
             if (auto unknown_keys =
@@ -167,7 +146,7 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
             }
         }
         if (auto it = json.find("sessions"); it != json.end()) {
-            static constexpr std::array<const char*, 2> kAllowedSessionKeys = {
+            static constexpr std::array<std::string_view, 2> kAllowedSessionKeys = {
                 "max_sessions", "idle_ttl_seconds"};
             if (auto unknown_keys =
                     reject_unknown_keys(*it, "sessions config", kAllowedSessionKeys);
@@ -189,7 +168,7 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
 
             for (size_t index = 0; index < it->size(); ++index) {
                 const auto& tool_json = (*it)[index];
-                static constexpr std::array<const char*, 8> kAllowedToolKeys = {
+                static constexpr std::array<std::string_view, 8> kAllowedToolKeys = {
                     "name", "description", "parameters", "command", "working_directory", "env",
                     "timeout_ms", "inherit_environment"};
                 if (auto unknown_keys =

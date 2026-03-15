@@ -25,7 +25,10 @@ class ServerRuntime {
   public:
     static Result<std::shared_ptr<ServerRuntime>> create(ServerConfig config);
 
-    ServerRuntime(ServerConfig config, std::shared_ptr<ChatService> chat_service);
+    /// Creates a ServerRuntime for tests, bypassing model loading and tool validation.
+    static std::shared_ptr<ServerRuntime> create_for_test(
+        ServerConfig config, std::shared_ptr<ChatService> chat_service);
+
     ~ServerRuntime();
 
     [[nodiscard]] const ServerConfig& config() const noexcept {
@@ -65,6 +68,8 @@ class ServerRuntime {
     }
 
   private:
+    ServerRuntime(ServerConfig config, std::shared_ptr<ChatService> chat_service);
+
     void run_session_reaper();
 
     ServerConfig config_;

@@ -1,8 +1,8 @@
 #include "server/chat_service.hpp"
 
+#include "server/internal_utils.hpp"
 #include "server/zoo_adapter.hpp"
 
-#include <chrono>
 #include <mutex>
 #include <utility>
 
@@ -53,17 +53,6 @@ class ZooCompletionSource final : public CompletionSource {
     mutable std::future<zoo::Expected<zoo::Response>> future_;
     bool consumed_ = false;
 };
-
-std::string combine_system_prompts(const std::string& base_prompt,
-                                   const std::string& request_prompt) {
-    if (base_prompt.empty()) {
-        return request_prompt;
-    }
-    if (request_prompt.empty()) {
-        return base_prompt;
-    }
-    return base_prompt + "\n\n" + request_prompt;
-}
 
 ConfiguredAgent configure_tools(ConfiguredAgent configured, const ToolProvider& tools) {
     configured.tool_definitions.reserve(tools.tools.size());
@@ -120,12 +109,6 @@ Result<ConfiguredAgent> create_configured_agent(const zoo::Config& base_config,
     } catch (const std::exception& error) {
         return std::unexpected(error.what());
     }
-}
-
-std::int64_t now_seconds() {
-    return std::chrono::duration_cast<std::chrono::seconds>(
-               std::chrono::system_clock::now().time_since_epoch())
-        .count();
 }
 
 CompletionHandle wrap_zoo_handle(zoo::RequestHandle handle) {

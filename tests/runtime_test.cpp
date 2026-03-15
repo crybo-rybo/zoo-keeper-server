@@ -30,7 +30,7 @@ TEST(RuntimeTest, StopDrainsBackgroundTasks) {
     config.model_id = "runtime-test-model";
     config.zoo_config.model_path = "/tmp/runtime-test-model.gguf";
 
-    auto runtime = std::make_shared<zks::server::ServerRuntime>(config, chat_service);
+    auto runtime = zks::server::ServerRuntime::create_for_test(config, chat_service);
 
     auto destroyed = std::make_shared<std::atomic<int>>(0);
     auto started = std::make_shared<std::atomic<bool>>(false);

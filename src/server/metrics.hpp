@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <string>
 
+#include <nlohmann/json_fwd.hpp>
+
 namespace zks::server {
 
 struct MetricsSnapshot {
@@ -19,6 +21,8 @@ struct MetricsSnapshot {
     size_t active_sessions = 0;
     std::string model_id;
     int64_t uptime_seconds = 0;
+
+    [[nodiscard]] nlohmann::json to_json() const;
 };
 
 class ServerMetrics {
@@ -93,6 +97,17 @@ class ServerMetrics {
         return std::chrono::duration_cast<std::chrono::seconds>(
                    std::chrono::steady_clock::now() - start_time_)
             .count();
+    }
+
+    void populate_snapshot(MetricsSnapshot& snapshot) const noexcept {
+        snapshot.requests_total = requests_total();
+        snapshot.requests_errors = requests_errors();
+        snapshot.requests_cancelled_total = requests_cancelled_total();
+        snapshot.requests_queue_rejected_total = requests_queue_rejected_total();
+        snapshot.stream_disconnects_total = stream_disconnects_total();
+        snapshot.tool_invocations_total = tool_invocations_total();
+        snapshot.tool_failures_total = tool_failures_total();
+        snapshot.tool_timeouts_total = tool_timeouts_total();
     }
 
   private:

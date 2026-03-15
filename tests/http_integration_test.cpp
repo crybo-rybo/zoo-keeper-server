@@ -65,7 +65,7 @@ class HttpIntegrationTest : public ::testing::Test {
         config.zoo_config.model_path = "/tmp/integration-test.gguf";
         config.http.client_max_body_size_bytes = 512;
 
-        g_state->runtime = std::make_shared<zks::server::ServerRuntime>(config, g_state->chat_service);
+        g_state->runtime = zks::server::ServerRuntime::create_for_test(config, g_state->chat_service);
         g_state->disconnect_registry = std::make_shared<zks::server::DisconnectRegistry>();
 
         zks::server::register_health_routes(drogon::app(), g_state->runtime);
