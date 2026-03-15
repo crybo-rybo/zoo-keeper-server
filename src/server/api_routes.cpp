@@ -70,6 +70,7 @@ void DisconnectRegistry::handle_connection_event(const trantor::TcpConnectionPtr
             return;
         }
 
+        callbacks.reserve(it->second.size());
         for (auto& [callback_id, callback] : it->second) {
             callbacks.push_back(std::move(callback));
         }

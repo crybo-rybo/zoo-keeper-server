@@ -33,7 +33,7 @@ ApiResult<void> reject_unknown_keys(const nlohmann::json& json, const char* cont
     return {};
 }
 
-ApiResult<MessageRole> parse_role(const std::string& role) {
+ApiResult<MessageRole> parse_role(std::string_view role) {
     if (role == "system") {
         return MessageRole::System;
     }
@@ -48,7 +48,7 @@ ApiResult<MessageRole> parse_role(const std::string& role) {
     }
 
     return std::unexpected(
-        invalid_request_error("Unsupported message role: " + role, "messages", "invalid_role"));
+        invalid_request_error("Unsupported message role: " + std::string(role), "messages", "invalid_role"));
 }
 
 ApiResult<ChatMessage> parse_message(const nlohmann::json& json, std::vector<ChatMessage>& seed) {
@@ -67,40 +67,30 @@ ApiResult<ChatMessage> parse_message(const nlohmann::json& json, std::vector<Cha
             invalid_request_error("message.content must be a string", "messages"));
     }
 
-    const auto role_string = json.at("role").get<std::string>();
-    auto role = parse_role(role_string);
+    auto role = parse_role(json.at("role").get_ref<const std::string&>());
     if (!role) {
         return std::unexpected(role.error());
     }
 
-    const auto content = json.at("content").get<std::string>();
-    ChatMessage message = ChatMessage::user(content);
+    // Move content out of the JSON value to avoid a copy. The json object is
+    // not used after this point for the content field.
+    auto content = json.at("content").get<std::string>();
+    ChatMessage message{MessageRole::User, {}, std::nullopt};
 
     if (*role == MessageRole::Tool) {
         if (!json.contains("tool_call_id") || !json.at("tool_call_id").is_string()) {
             return std::unexpected(invalid_request_error(
                 "tool messages must include a string tool_call_id", "messages"));
         }
-        message = ChatMessage::tool(content, json.at("tool_call_id").get<std::string>());
+        message = ChatMessage::tool(std::move(content), json.at("tool_call_id").get<std::string>());
     } else {
         if (json.contains("tool_call_id")) {
             return std::unexpected(
                 invalid_request_error("tool_call_id is only valid for tool messages", "messages"));
         }
 
-        switch (*role) {
-        case MessageRole::System:
-            message = ChatMessage::system(content);
-            break;
-        case MessageRole::User:
-            message = ChatMessage::user(content);
-            break;
-        case MessageRole::Assistant:
-            message = ChatMessage::assistant(content);
-            break;
-        case MessageRole::Tool:
-            break;
-        }
+        message.role = *role;
+        message.content = std::move(content);
     }
 
     if (auto validation = validate_message_sequence(seed, message.role); !validation) {

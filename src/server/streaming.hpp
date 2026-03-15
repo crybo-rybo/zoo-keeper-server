@@ -12,6 +12,9 @@
 namespace zks::server {
 
 std::string make_sse_data(const nlohmann::json& payload);
+
+// Returns the SSE stream termination marker. Returns std::string because
+// callers pass it to push_frame() which takes std::string by value.
 std::string make_sse_done();
 std::string make_chat_completion_chunk(std::string_view completion_id, std::int64_t created,
                                        std::string_view model_id,

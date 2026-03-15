@@ -262,19 +262,21 @@ void ZooChatService::stop() {
 
 std::vector<ChatMessage>
 ZooChatService::prepare_messages(const ChatCompletionRequest& request) const {
-    auto messages = request.messages;
     if (request_system_prompt_.empty()) {
-        return messages;
+        return request.messages; // copy only when needed (RVO applies)
     }
 
-    if (!messages.empty() && messages.front().role == MessageRole::System) {
-        messages.front() =
-            ChatMessage::system(combine_system_prompts(request_system_prompt_,
-                                                       messages.front().content));
-        return messages;
+    std::vector<ChatMessage> messages;
+    if (!request.messages.empty() && request.messages.front().role == MessageRole::System) {
+        messages.reserve(request.messages.size());
+        messages.push_back(ChatMessage::system(combine_system_prompts(
+            request_system_prompt_, request.messages.front().content)));
+        messages.insert(messages.end(), request.messages.begin() + 1, request.messages.end());
+    } else {
+        messages.reserve(request.messages.size() + 1);
+        messages.push_back(ChatMessage::system(request_system_prompt_));
+        messages.insert(messages.end(), request.messages.begin(), request.messages.end());
     }
-
-    messages.insert(messages.begin(), ChatMessage::system(request_system_prompt_));
     return messages;
 }
 

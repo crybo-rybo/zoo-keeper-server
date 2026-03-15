@@ -1070,7 +1070,14 @@ drogon::HttpResponsePtr make_test_ui_response(const HealthSnapshot& snapshot) {
     response->setStatusCode(drogon::k200OK);
     response->setContentTypeCodeAndCustomString(drogon::CT_TEXT_HTML, "text/html; charset=utf-8");
     response->addHeader("Cache-Control", "no-store");
-    response->setBody(std::string(kHtmlPrefix) + boot_payload + std::string(kHtmlSuffix));
+    // Pre-allocate the full body to avoid repeated reallocations from string
+    // concatenation of the two large constexpr HTML fragments.
+    std::string body;
+    body.reserve(kHtmlPrefix.size() + boot_payload.size() + kHtmlSuffix.size());
+    body.append(kHtmlPrefix);
+    body.append(boot_payload);
+    body.append(kHtmlSuffix);
+    response->setBody(std::move(body));
     return response;
 }
 
