@@ -2,6 +2,7 @@
 
 #include "server/result.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <span>
@@ -36,15 +37,7 @@ inline Result<void> reject_unknown_keys(const nlohmann::json& json, std::string_
     }
 
     for (auto it = json.begin(); it != json.end(); ++it) {
-        bool allowed = false;
-        for (const auto key : allowed_keys) {
-            if (it.key() == key) {
-                allowed = true;
-                break;
-            }
-        }
-
-        if (!allowed) {
+        if (std::find(allowed_keys.begin(), allowed_keys.end(), it.key()) == allowed_keys.end()) {
             return std::unexpected("Unknown " + std::string(context) + " key: " + it.key());
         }
     }

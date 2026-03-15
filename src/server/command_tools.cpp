@@ -14,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <spawn.h>
 #include <stdexcept>
@@ -878,9 +879,6 @@ CommandToolRunResult run_command_tool(const CommandToolConfig& tool, const nlohm
 }
 
 Result<ToolProvider> make_command_tool_provider(const std::vector<CommandToolConfig>& tools) {
-    std::vector<PreparedCommandTool> prepared_tools;
-    prepared_tools.reserve(tools.size());
-
     ToolProvider provider;
     provider.tools.reserve(tools.size());
 
@@ -890,28 +888,23 @@ Result<ToolProvider> make_command_tool_provider(const std::vector<CommandToolCon
             return std::unexpected("Invalid tool '" + tool.name + "': " + prepared.error());
         }
 
+        auto shared = std::make_shared<const PreparedCommandTool>(std::move(*prepared));
         provider.tools.push_back(RegisteredTool{
             .definition = ToolDefinition{tool.name, tool.description, tool.parameters_schema},
-            .invoke = {},
+            .invoke =
+                [shared](const nlohmann::json& arguments) -> RuntimeResult<nlohmann::json> {
+                auto result = run_prepared_command_tool(*shared, arguments);
+                if (!result) {
+                    return std::unexpected(RuntimeError{
+                        RuntimeErrorCode::ToolExecutionFailed,
+                        result.error().message,
+                        result.error().timed_out ? std::optional<std::string>(kTimeoutContext)
+                                                 : std::nullopt,
+                    });
+                }
+                return *result;
+            },
         });
-        prepared_tools.push_back(std::move(*prepared));
-    }
-
-    for (size_t index = 0; index < prepared_tools.size(); ++index) {
-        const auto& prepared = prepared_tools[index];
-        provider.tools[index].invoke =
-            [prepared](const nlohmann::json& arguments) -> RuntimeResult<nlohmann::json> {
-            auto result = run_prepared_command_tool(prepared, arguments);
-            if (!result) {
-                return std::unexpected(RuntimeError{
-                    RuntimeErrorCode::ToolExecutionFailed,
-                    result.error().message,
-                    result.error().timed_out ? std::optional<std::string>(kTimeoutContext)
-                                             : std::nullopt,
-                });
-            }
-            return *result;
-        };
     }
 
     return provider;
