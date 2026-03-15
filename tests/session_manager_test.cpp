@@ -1,22 +1,17 @@
+#include "doctest.h"
+
 #include "server/session_manager.hpp"
 
 #include <atomic>
 #include <future>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace {
-
-int fail(std::string_view message) {
-    std::cerr << message << '\n';
-    return 1;
-}
 
 class PromiseCompletionSource final : public zks::server::CompletionSource {
   public:
@@ -144,45 +139,38 @@ finish_pending(zks::server::PendingChatCompletion& pending,
     return observed;
 }
 
-int test_create_session_and_commit_history() {
+} // namespace
+
+TEST_CASE("create session and commit history") {
     FakeExecutor executor;
     auto manager = make_session_manager(executor);
     std::atomic<std::uint64_t> next_completion_id{1};
 
     zks::server::SessionCreateRequest create_request{"local-model", "Session prompt"};
     auto created = manager->create_session(create_request);
-    if (!created || created->id != "sess-1") {
-        return fail("Expected session creation to succeed.");
-    }
-    if (executor.request_count() != 0) {
-        return fail("Creating a session should not start inference.");
-    }
+    REQUIRE(created.has_value());
+    CHECK(created->id == "sess-1");
+    CHECK(executor.request_count() == 0);
 
-    auto pending = manager->start_completion(make_chat_request(created->id, "Hello"), next_completion_id);
-    if (!pending) {
-        return fail("Expected first session completion to start successfully.");
-    }
+    auto pending = manager->start_completion(make_chat_request(created->id, "Hello"),
+                                             next_completion_id);
+    REQUIRE(pending.has_value());
 
     const std::vector<zks::server::ChatMessage> expected_first = {
         zks::server::ChatMessage::system("Base prompt\n\nSession prompt"),
         zks::server::ChatMessage::user("Hello"),
     };
-    if (executor.request(0)->messages != expected_first) {
-        return fail("Session completion did not submit the expected first-turn history.");
-    }
+    CHECK(executor.request(0)->messages == expected_first);
 
     zks::server::CompletionResult response;
     response.text = "Hi there";
     auto observed = finish_pending(*pending, executor.request(0), response);
-    if (!observed || observed->text != "Hi there") {
-        return fail("Expected the first session completion to succeed.");
-    }
+    REQUIRE(observed.has_value());
+    CHECK(observed->text == "Hi there");
 
     auto second = manager->start_completion(make_chat_request(created->id, "Follow up"),
                                             next_completion_id);
-    if (!second) {
-        return fail("Expected second session completion to start successfully.");
-    }
+    REQUIRE(second.has_value());
 
     const std::vector<zks::server::ChatMessage> expected_second = {
         zks::server::ChatMessage::system("Base prompt\n\nSession prompt"),
@@ -190,194 +178,147 @@ int test_create_session_and_commit_history() {
         zks::server::ChatMessage::assistant("Hi there"),
         zks::server::ChatMessage::user("Follow up"),
     };
-    if (executor.request(1)->messages != expected_second) {
-        return fail("Successful completion was not committed to retained session history.");
-    }
+    CHECK(executor.request(1)->messages == expected_second);
 
     response.text = "Second answer";
     observed = finish_pending(*second, executor.request(1), response);
-    if (!observed || observed->text != "Second answer") {
-        return fail("Expected the follow-up session completion to succeed.");
-    }
-    return 0;
+    REQUIRE(observed.has_value());
+    CHECK(observed->text == "Second answer");
 }
 
-int test_failed_turn_does_not_mutate_history() {
+TEST_CASE("failed turn does not mutate history") {
     FakeExecutor executor;
     auto manager = make_session_manager(executor);
     std::atomic<std::uint64_t> next_completion_id{1};
 
     auto created = manager->create_session({"local-model", std::nullopt});
-    if (!created) {
-        return fail("Expected session creation to succeed for failed-turn test.");
-    }
+    REQUIRE(created.has_value());
 
-    auto pending = manager->start_completion(make_chat_request(created->id, "Hello"), next_completion_id);
-    if (!pending) {
-        return fail("Expected first session completion to start in failed-turn test.");
-    }
+    auto pending = manager->start_completion(make_chat_request(created->id, "Hello"),
+                                             next_completion_id);
+    REQUIRE(pending.has_value());
 
     auto error = std::unexpected(zks::server::RuntimeError{
         zks::server::RuntimeErrorCode::InferenceFailed,
         "boom",
     });
     auto observed = finish_pending(*pending, executor.request(0), error);
-    if (observed) {
-        return fail("Expected failed-turn completion to surface an error.");
-    }
+    CHECK_FALSE(observed.has_value());
 
-    auto retry = manager->start_completion(make_chat_request(created->id, "Retry"), next_completion_id);
-    if (!retry) {
-        return fail("Expected retry completion to start after failure.");
-    }
+    auto retry = manager->start_completion(make_chat_request(created->id, "Retry"),
+                                           next_completion_id);
+    REQUIRE(retry.has_value());
 
     const std::vector<zks::server::ChatMessage> expected_retry = {
         zks::server::ChatMessage::system("Base prompt"),
         zks::server::ChatMessage::user("Retry"),
     };
-    if (executor.request(1)->messages != expected_retry) {
-        return fail("Failed turn was incorrectly committed to retained history.");
-    }
+    CHECK(executor.request(1)->messages == expected_retry);
 
     zks::server::CompletionResult response;
     response.text = "Recovered";
     observed = finish_pending(*retry, executor.request(1), response);
-    if (!observed || observed->text != "Recovered") {
-        return fail("Expected retry completion to succeed.");
-    }
-
-    return 0;
+    REQUIRE(observed.has_value());
+    CHECK(observed->text == "Recovered");
 }
 
-int test_same_session_busy_but_different_sessions_can_queue() {
+TEST_CASE("same session busy but different sessions can queue") {
     FakeExecutor executor;
     auto manager = make_session_manager(executor);
     std::atomic<std::uint64_t> next_completion_id{1};
 
     auto session_a = manager->create_session({"local-model", std::nullopt});
     auto session_b = manager->create_session({"local-model", "Other prompt"});
-    if (!session_a || !session_b) {
-        return fail("Expected both sessions to be created.");
-    }
+    REQUIRE(session_a.has_value());
+    REQUIRE(session_b.has_value());
 
-    auto first = manager->start_completion(make_chat_request(session_a->id, "A1"), next_completion_id);
-    if (!first) {
-        return fail("Expected first request for session A to start.");
-    }
+    auto first = manager->start_completion(make_chat_request(session_a->id, "A1"),
+                                           next_completion_id);
+    REQUIRE(first.has_value());
 
-    auto busy = manager->start_completion(make_chat_request(session_a->id, "A2"), next_completion_id);
-    if (busy || busy.error().http_status != 409) {
-        return fail("Expected same-session concurrent request to return session_busy.");
-    }
+    auto busy = manager->start_completion(make_chat_request(session_a->id, "A2"),
+                                          next_completion_id);
+    REQUIRE_FALSE(busy.has_value());
+    CHECK(busy.error().http_status == 409);
 
-    auto second = manager->start_completion(make_chat_request(session_b->id, "B1"), next_completion_id);
-    if (!second) {
-        return fail("Expected different-session request to queue while session A is active.");
-    }
-
-    if (executor.request_count() != 2) {
-        return fail("Expected both active sessions to submit requests to the shared executor.");
-    }
+    auto second = manager->start_completion(make_chat_request(session_b->id, "B1"),
+                                            next_completion_id);
+    REQUIRE(second.has_value());
+    CHECK(executor.request_count() == 2);
 
     zks::server::CompletionResult response;
     response.text = "ok";
     auto observed = finish_pending(*first, executor.request(0), response);
-    if (!observed) {
-        return fail("Expected session A completion to finish successfully.");
-    }
+    REQUIRE(observed.has_value());
     observed = finish_pending(*second, executor.request(1), response);
-    if (!observed) {
-        return fail("Expected session B completion to finish successfully.");
-    }
-
-    return 0;
+    REQUIRE(observed.has_value());
 }
 
-int test_delete_active_session_cancels_request() {
+TEST_CASE("delete active session cancels request") {
     FakeExecutor executor;
     auto manager = make_session_manager(executor, "Base prompt", 64, 1);
     std::atomic<std::uint64_t> next_completion_id{1};
 
     auto created = manager->create_session({"local-model", std::nullopt});
-    if (!created) {
-        return fail("Expected session creation to succeed.");
-    }
+    REQUIRE(created.has_value());
 
-    auto pending = manager->start_completion(make_chat_request(created->id, "Hello"), next_completion_id);
-    if (!pending) {
-        return fail("Expected session completion to start before deletion.");
-    }
+    auto pending = manager->start_completion(make_chat_request(created->id, "Hello"),
+                                             next_completion_id);
+    REQUIRE(pending.has_value());
     auto submitted = executor.request(0);
 
     auto deleted = manager->delete_session(created->id);
-    if (!deleted) {
-        return fail("Expected session deletion to succeed.");
-    }
-    if (!submitted->cancelled) {
-        return fail("Deleting an active session should cancel the executor request.");
-    }
+    REQUIRE(deleted.has_value());
+    CHECK(submitted->cancelled);
 
     zks::server::CompletionResult response;
     response.text = "late answer";
     auto observed = finish_pending(*pending, submitted, response);
-    if (!observed || observed->text != "late answer") {
-        return fail("Expected deleted-session completion future to resolve.");
-    }
+    REQUIRE(observed.has_value());
+    CHECK(observed->text == "late answer");
 
     auto missing = manager->get_session(created->id);
-    if (missing || missing.error().http_status != 404) {
-        return fail("Deleted session should no longer be retrievable.");
-    }
-    return 0;
+    REQUIRE_FALSE(missing.has_value());
+    CHECK(missing.error().http_status == 404);
 }
 
-int test_session_capacity_is_enforced() {
+TEST_CASE("session capacity is enforced") {
     FakeExecutor executor;
     auto manager = make_session_manager(executor, "Base prompt", 64, 1);
 
     auto first = manager->create_session({"local-model", std::nullopt});
-    if (!first) {
-        return fail("Expected first session creation to succeed.");
-    }
+    REQUIRE(first.has_value());
 
     auto second = manager->create_session({"local-model", std::nullopt});
-    if (second || second.error().http_status != 503 ||
-        second.error().code != std::optional<std::string>{"session_capacity_reached"}) {
-        return fail("Expected session capacity to reject the second session.");
-    }
-
-    return 0;
+    REQUIRE_FALSE(second.has_value());
+    CHECK(second.error().http_status == 503);
+    CHECK(second.error().code == std::optional<std::string>{"session_capacity_reached"});
 }
 
-int test_history_trims_oldest_turns() {
+TEST_CASE("history trims oldest turns") {
     FakeExecutor executor;
     auto manager = make_session_manager(executor, "Base prompt", 2);
     std::atomic<std::uint64_t> next_completion_id{1};
 
     auto created = manager->create_session({"local-model", std::nullopt});
-    if (!created) {
-        return fail("Expected session creation to succeed for history trimming test.");
-    }
+    REQUIRE(created.has_value());
 
-    auto first = manager->start_completion(make_chat_request(created->id, "One"), next_completion_id);
-    if (!first) {
-        return fail("Expected first history request to start.");
-    }
+    auto first = manager->start_completion(make_chat_request(created->id, "One"),
+                                           next_completion_id);
+    REQUIRE(first.has_value());
     zks::server::CompletionResult response;
     response.text = "One answer";
     finish_pending(*first, executor.request(0), response);
 
-    auto second = manager->start_completion(make_chat_request(created->id, "Two"), next_completion_id);
-    if (!second) {
-        return fail("Expected second history request to start.");
-    }
+    auto second = manager->start_completion(make_chat_request(created->id, "Two"),
+                                            next_completion_id);
+    REQUIRE(second.has_value());
     response.text = "Two answer";
     finish_pending(*second, executor.request(1), response);
 
-    auto third = manager->start_completion(make_chat_request(created->id, "Three"), next_completion_id);
-    if (!third) {
-        return fail("Expected third history request to start.");
-    }
+    auto third = manager->start_completion(make_chat_request(created->id, "Three"),
+                                           next_completion_id);
+    REQUIRE(third.has_value());
 
     const std::vector<zks::server::ChatMessage> expected = {
         zks::server::ChatMessage::system("Base prompt"),
@@ -385,36 +326,8 @@ int test_history_trims_oldest_turns() {
         zks::server::ChatMessage::assistant("Two answer"),
         zks::server::ChatMessage::user("Three"),
     };
-    if (executor.request(2)->messages != expected) {
-        return fail("Session history did not trim the oldest turn as expected.");
-    }
+    CHECK(executor.request(2)->messages == expected);
 
     response.text = "Three answer";
     finish_pending(*third, executor.request(2), response);
-    return 0;
-}
-
-} // namespace
-
-int main() {
-    if (auto status = test_create_session_and_commit_history(); status != 0) {
-        return status;
-    }
-    if (auto status = test_failed_turn_does_not_mutate_history(); status != 0) {
-        return status;
-    }
-    if (auto status = test_same_session_busy_but_different_sessions_can_queue(); status != 0) {
-        return status;
-    }
-    if (auto status = test_delete_active_session_cancels_request(); status != 0) {
-        return status;
-    }
-    if (auto status = test_session_capacity_is_enforced(); status != 0) {
-        return status;
-    }
-    if (auto status = test_history_trims_oldest_turns(); status != 0) {
-        return status;
-    }
-
-    return 0;
 }

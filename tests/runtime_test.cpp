@@ -1,21 +1,15 @@
+#include "doctest.h"
+
 #include "server/runtime.hpp"
 
 #include "fake_chat_service.hpp"
 
 #include <atomic>
 #include <chrono>
-#include <iostream>
 #include <memory>
-#include <string_view>
 #include <thread>
-#include <vector>
 
 namespace {
-
-int fail(std::string_view message) {
-    std::cerr << message << '\n';
-    return 1;
-}
 
 struct Probe {
     explicit Probe(std::shared_ptr<std::atomic<int>> destroyed) : destroyed_(std::move(destroyed)) {}
@@ -29,7 +23,7 @@ struct Probe {
 
 } // namespace
 
-int main() {
+TEST_CASE("ServerRuntime stop drains background tasks") {
     auto chat_service = std::make_shared<FakeChatService>();
     chat_service->set_model_id("runtime-test-model");
     zks::server::ServerConfig config;
@@ -46,9 +40,7 @@ int main() {
         started->store(true, std::memory_order_release);
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     });
-    if (!submitted) {
-        return fail("Expected background task submission to succeed.");
-    }
+    REQUIRE(submitted);
 
     while (!started->load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -56,18 +48,9 @@ int main() {
 
     runtime->stop();
 
-    if (chat_service->stop_calls() != 1) {
-        return fail("Expected ServerRuntime::stop() to stop the chat service exactly once.");
-    }
-
-    if (destroyed->load(std::memory_order_relaxed) != 1) {
-        return fail("Expected background task captures to be destroyed during stop().");
-    }
+    CHECK(chat_service->stop_calls() == 1);
+    CHECK(destroyed->load(std::memory_order_relaxed) == 1);
 
     runtime->stop();
-    if (chat_service->stop_calls() != 1) {
-        return fail("Expected ServerRuntime::stop() to remain idempotent.");
-    }
-
-    return 0;
+    CHECK(chat_service->stop_calls() == 1);
 }
