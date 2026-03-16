@@ -9,10 +9,12 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace zoo {
@@ -99,12 +101,20 @@ class ZooChatService final : public ChatService {
     start_session_completion(const ChatCompletionRequest& request,
                              std::optional<TokenCallback> callback);
 
+    void track_session_request(const std::string& session_id, std::uint64_t zoo_request_id);
+    void untrack_session_request(const std::string& session_id);
+
     std::string model_id_;
     std::string request_system_prompt_;
     std::vector<ToolDefinition> tool_metadata_;
     std::shared_ptr<zoo::Agent> agent_;
     std::unique_ptr<SessionStore> session_store_;
     std::atomic<std::uint64_t> next_completion_id_{1};
+
+    /// Maps session_id → zoo::RequestId for active session requests.
+    /// Used by delete_session to cancel in-flight inference.
+    std::mutex active_requests_mutex_;
+    std::unordered_map<std::string, std::uint64_t> active_session_requests_;
 };
 
 } // namespace zks::server

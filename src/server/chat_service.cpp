@@ -20,9 +20,13 @@ struct ConfiguredAgent {
 
 /// Adapts a zoo::Expected<zoo::Response> future into a RuntimeResult<CompletionResult> future
 /// by converting the response (int→int64_t promotion for usage fields).
+///
+/// Uses std::launch::async (not deferred) so that wait_for() correctly reports
+/// ready/timeout. A deferred future always returns std::future_status::deferred,
+/// which breaks the fast-path check in completion_controller.cpp.
 std::future<RuntimeResult<CompletionResult>>
 adapt_zoo_future(std::future<zoo::Expected<zoo::Response>> zoo_future) {
-    return std::async(std::launch::deferred, [f = std::move(zoo_future)]() mutable {
+    return std::async(std::launch::async, [f = std::move(zoo_future)]() mutable {
         auto result = f.get();
         if (!result) {
             return RuntimeResult<CompletionResult>{std::unexpected(result.error())};
@@ -199,9 +203,12 @@ ZooChatService::start_session_completion(const ChatCompletionRequest& request,
     const auto completion_id = "chatcmpl-" + std::to_string(tracking_id);
     const auto session_id = *request.session_id;
 
-    auto lease =
-        std::make_shared<CompletionLease>([store = session_store_.get(), session_id, tracking_id] {
-            store->release_request(session_id, tracking_id);
+    track_session_request(session_id, zoo_request_id);
+
+    auto lease = std::make_shared<CompletionLease>(
+        [this, session_id, tracking_id] {
+            untrack_session_request(session_id);
+            session_store_->release_request(session_id, tracking_id);
         });
 
     return PendingChatCompletion{
@@ -209,9 +216,10 @@ ZooChatService::start_session_completion(const ChatCompletionRequest& request,
         begin->started_at,
         model_id_,
         std::move(handle),
-        [store = session_store_.get(), session_id, tracking_id,
+        [this, session_id, tracking_id,
          user_message = begin->user_message](const RuntimeResult<CompletionResult>& result) {
-            store->commit_result(session_id, tracking_id, user_message, result);
+            untrack_session_request(session_id);
+            session_store_->commit_result(session_id, tracking_id, user_message, result);
         },
         [agent = agent_, zoo_request_id] {
             if (agent) {
@@ -235,7 +243,26 @@ ApiResult<SessionSummary> ZooChatService::get_session(std::string_view session_i
 }
 
 ApiResult<void> ZooChatService::delete_session(std::string_view session_id) {
-    return session_store_->delete_session(session_id);
+    auto result = session_store_->delete_session(session_id);
+    if (!result) {
+        return result;
+    }
+
+    // Cancel any in-flight inference for this session.
+    std::uint64_t zoo_request_id = 0;
+    {
+        std::lock_guard<std::mutex> lock(active_requests_mutex_);
+        auto it = active_session_requests_.find(std::string(session_id));
+        if (it != active_session_requests_.end()) {
+            zoo_request_id = it->second;
+            active_session_requests_.erase(it);
+        }
+    }
+    if (zoo_request_id != 0 && agent_) {
+        agent_->cancel(static_cast<zoo::RequestId>(zoo_request_id));
+    }
+
+    return result;
 }
 
 void ZooChatService::reap_sessions() noexcept {
@@ -271,6 +298,17 @@ ZooChatService::prepare_messages(const ChatCompletionRequest& request) const {
         messages.insert(messages.end(), request.messages.begin(), request.messages.end());
     }
     return messages;
+}
+
+void ZooChatService::track_session_request(const std::string& session_id,
+                                            std::uint64_t zoo_request_id) {
+    std::lock_guard<std::mutex> lock(active_requests_mutex_);
+    active_session_requests_[session_id] = zoo_request_id;
+}
+
+void ZooChatService::untrack_session_request(const std::string& session_id) {
+    std::lock_guard<std::mutex> lock(active_requests_mutex_);
+    active_session_requests_.erase(session_id);
 }
 
 } // namespace zks::server
