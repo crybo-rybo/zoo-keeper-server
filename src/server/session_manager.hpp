@@ -104,8 +104,4 @@ class SessionStore {
     bool stopping_ = false;
 };
 
-/// @deprecated Use SessionStore directly. This alias exists for backward
-///             compatibility and will be removed in a future release.
-using SessionManager = SessionStore;
-
 } // namespace zks::server
