@@ -33,45 +33,10 @@ enum class FakeCompletionMode {
 
 namespace {
 
-class TestCompletionSource final : public zks::server::CompletionSource {
-  public:
-    explicit TestCompletionSource(
-        std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future)
-        : future_(std::move(future)) {}
-
-    [[nodiscard]] std::future_status wait_for(std::chrono::milliseconds timeout) const override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (consumed_) {
-            return std::future_status::ready;
-        }
-        return future_.wait_for(timeout);
-    }
-
-    zks::server::RuntimeResult<zks::server::CompletionResult> get() override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (consumed_) {
-            return std::unexpected(zks::server::RuntimeError{
-                zks::server::RuntimeErrorCode::RuntimeFailure,
-                "Completion already consumed",
-            });
-        }
-        consumed_ = true;
-        return future_.get();
-    }
-
-  private:
-    mutable std::mutex mutex_;
-    mutable std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future_;
-    bool consumed_ = false;
-};
-
 inline zks::server::CompletionHandle
 make_handle(std::uint64_t id,
             std::future<zks::server::RuntimeResult<zks::server::CompletionResult>> future) {
-    return zks::server::CompletionHandle{
-        id,
-        std::make_shared<TestCompletionSource>(std::move(future)),
-    };
+    return zks::server::make_completion_handle(id, std::move(future));
 }
 
 } // namespace
@@ -116,8 +81,8 @@ class FakeChatService final : public zks::server::ChatService {
 
     ~FakeChatService() {
         finish_latch_->signal();
-        if (streaming_thread_.joinable()) {
-            streaming_thread_.join();
+        if (streaming_future_.valid()) {
+            streaming_future_.wait();
         }
     }
 
@@ -175,7 +140,8 @@ class FakeChatService final : public zks::server::ChatService {
             std::promise<zks::server::RuntimeResult<zks::server::CompletionResult>> promise;
             auto future = promise.get_future();
 
-            streaming_thread_ = std::thread([cb = std::move(callback), latch = std::move(latch),
+            streaming_future_ = std::async(std::launch::async,
+                                            [cb = std::move(callback), latch = std::move(latch),
                                              promise = std::move(promise)]() mutable {
                 if (cb.has_value()) {
                     (*cb)("hello ");
@@ -256,5 +222,5 @@ class FakeChatService final : public zks::server::ChatService {
     std::atomic<bool> ready_{true};
     std::atomic<FakeCompletionMode> mode_{FakeCompletionMode::ServerError};
     std::shared_ptr<Latch> finish_latch_ = std::make_shared<Latch>();
-    std::thread streaming_thread_;
+    std::future<void> streaming_future_;
 };

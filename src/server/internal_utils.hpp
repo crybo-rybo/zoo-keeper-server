@@ -13,6 +13,25 @@
 
 namespace zks::server {
 
+/// Clock function type for injectable time sources. Defaults to `now_seconds`.
+using Clock = std::function<std::int64_t()>;
+
+/// Transparent hash and equality for std::unordered_map<std::string, ...> that
+/// allows lookup by std::string_view without allocating a temporary std::string.
+struct TransparentStringHash {
+    using is_transparent = void;
+    size_t operator()(std::string_view sv) const noexcept {
+        return std::hash<std::string_view>{}(sv);
+    }
+};
+
+struct TransparentStringEqual {
+    using is_transparent = void;
+    bool operator()(std::string_view a, std::string_view b) const noexcept {
+        return a == b;
+    }
+};
+
 inline std::int64_t now_seconds() {
     return std::chrono::duration_cast<std::chrono::seconds>(
                std::chrono::system_clock::now().time_since_epoch())

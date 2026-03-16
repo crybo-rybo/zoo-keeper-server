@@ -34,7 +34,6 @@ zks_add_test(http_integration_test SOURCES http_integration_test.cpp)
 set_tests_properties(http_integration_test PROPERTIES TIMEOUT 30)
 zks_add_test(streaming_test SOURCES streaming_test.cpp)
 zks_add_test(executor_test SOURCES executor_test.cpp)
-zks_add_test(zoo_adapter_test SOURCES zoo_adapter_test.cpp)
 zks_add_test(command_tools_test
     OWN_MAIN
     SOURCES command_tools_test.cpp

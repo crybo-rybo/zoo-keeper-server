@@ -1,23 +1,24 @@
 #pragma once
 
-#include "server/runtime.hpp"
+#include "server/metrics.hpp"
 
 #include <functional>
-#include <memory>
 #include <utility>
 
 #include <drogon/HttpResponse.h>
 
 namespace zks::server {
 
+/// Wraps a Drogon response callback to increment request/error metrics.
+/// Takes a reference to ServerMetrics — the metrics object outlives all requests
+/// (owned by ServerRuntime), so a reference is safe and avoids a shared_ptr copy per request.
 inline std::function<void(const drogon::HttpResponsePtr&)>
-with_metrics(std::shared_ptr<ServerRuntime> runtime,
+with_metrics(ServerMetrics& metrics,
              std::function<void(const drogon::HttpResponsePtr&)> callback) {
-    return [runtime = std::move(runtime),
-            callback = std::move(callback)](const drogon::HttpResponsePtr& resp) {
-        runtime->metrics().increment_requests();
+    return [&metrics, callback = std::move(callback)](const drogon::HttpResponsePtr& resp) {
+        metrics.increment_requests();
         if (static_cast<int>(resp->getStatusCode()) >= 400) {
-            runtime->metrics().increment_errors();
+            metrics.increment_errors();
         }
         callback(resp);
     };

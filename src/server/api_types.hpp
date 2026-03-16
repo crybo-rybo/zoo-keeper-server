@@ -16,8 +16,30 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include <zoo/core/types.hpp>
 
 namespace zks::server {
+
+// --- Type aliases: use zoo-keeper types directly (controlled submodule) ---
+
+using MessageRole = zoo::Role;
+using ChatMessage = zoo::Message;
+using RuntimeErrorCode = zoo::ErrorCode;
+using RuntimeError = zoo::Error;
+template <typename T> using RuntimeResult = zoo::Expected<T>;
+using ToolInvocationStatus = zoo::ToolInvocationStatus;
+using ToolInvocationRecord = zoo::ToolInvocation;
+
+using TokenCallback = std::function<void(std::string_view)>;
+
+// --- String conversions ---
+
+/// Thin wrapper around zoo::role_to_string().
+[[nodiscard]] std::string_view to_string(MessageRole role) noexcept;
+
+// ToolInvocationStatus: use zoo::to_string() via ADL.
+
+// --- API error handling ---
 
 struct ApiError {
     int http_status = 400;
@@ -29,75 +51,12 @@ struct ApiError {
 
 template <typename T> using ApiResult = std::expected<T, ApiError>;
 
-enum class MessageRole {
-    System,
-    User,
-    Assistant,
-    Tool,
-};
-
-[[nodiscard]] std::string_view to_string(MessageRole role) noexcept;
-
-struct ChatMessage {
-    MessageRole role = MessageRole::User;
-    std::string content;
-    std::optional<std::string> tool_call_id;
-
-    [[nodiscard]] static ChatMessage system(std::string content);
-    [[nodiscard]] static ChatMessage user(std::string content);
-    [[nodiscard]] static ChatMessage assistant(std::string content);
-    [[nodiscard]] static ChatMessage tool(std::string content, std::string tool_call_id);
-
-    bool operator==(const ChatMessage& other) const = default;
-};
+// --- Message validation ---
 
 [[nodiscard]] Result<void> validate_message_sequence(const std::vector<ChatMessage>& history,
                                                      MessageRole next_role);
 
-enum class ToolInvocationStatus {
-    Succeeded,
-    ValidationFailed,
-    ExecutionFailed,
-};
-
-[[nodiscard]] std::string_view to_string(ToolInvocationStatus status) noexcept;
-
-enum class RuntimeErrorCode {
-    InvalidConfig,
-    InvalidSamplingParams,
-    InvalidModelPath,
-    InvalidContextSize,
-    BackendInitFailed,
-    ModelLoadFailed,
-    ContextCreationFailed,
-    InferenceFailed,
-    TokenizationFailed,
-    ContextWindowExceeded,
-    InvalidMessageSequence,
-    TemplateRenderFailed,
-    AgentNotRunning,
-    RequestCancelled,
-    RequestTimeout,
-    QueueFull,
-    ToolNotFound,
-    ToolExecutionFailed,
-    InvalidToolSignature,
-    InvalidToolSchema,
-    ToolValidationFailed,
-    ToolRetriesExhausted,
-    ToolLoopLimitReached,
-    RuntimeFailure,
-};
-
-struct RuntimeError {
-    RuntimeErrorCode code = RuntimeErrorCode::RuntimeFailure;
-    std::string message;
-    std::optional<std::string> context;
-
-    bool operator==(const RuntimeError& other) const = default;
-};
-
-template <typename T> using RuntimeResult = std::expected<T, RuntimeError>;
+// --- Server-specific types (different field types from zoo) ---
 
 struct ToolDefinition {
     std::string name;
@@ -105,17 +64,6 @@ struct ToolDefinition {
     nlohmann::json parameters_schema;
 
     bool operator==(const ToolDefinition& other) const = default;
-};
-
-struct ToolInvocationRecord {
-    std::string id;
-    std::string name;
-    std::string arguments_json;
-    ToolInvocationStatus status = ToolInvocationStatus::Succeeded;
-    std::optional<std::string> result_json;
-    std::optional<RuntimeError> error;
-
-    bool operator==(const ToolInvocationRecord& other) const = default;
 };
 
 struct CompletionUsage {
@@ -143,26 +91,32 @@ struct CompletionResult {
     bool operator==(const CompletionResult& other) const = default;
 };
 
-using TokenCallback = std::function<void(std::string_view)>;
 using CompletionObserver = std::function<void(const RuntimeResult<CompletionResult>&)>;
 
-class CompletionSource {
-  public:
-    virtual ~CompletionSource() = default;
-
-    [[nodiscard]] virtual std::future_status wait_for(std::chrono::milliseconds timeout) const = 0;
-    virtual RuntimeResult<CompletionResult> get() = 0;
+/// Non-virtual inner state for CompletionHandle. Heap-allocated via shared_ptr
+/// to keep CompletionHandle movable/copyable.
+struct CompletionState {
+    mutable std::mutex mutex;
+    mutable std::future<RuntimeResult<CompletionResult>> future;
+    bool consumed = false;
 };
 
 /// Lightweight handle to an in-flight or completed async completion.
+/// No virtual dispatch — holds a concrete future via shared state.
 struct CompletionHandle {
     std::uint64_t id = 0;
-    std::shared_ptr<CompletionSource> source;
+    std::shared_ptr<CompletionState> state;
 
     [[nodiscard]] std::future_status wait_for(std::chrono::milliseconds timeout) const;
-    /// Consumes the result from the underlying source. May only be called once.
+    /// Consumes the result from the underlying future. May only be called once.
     RuntimeResult<CompletionResult> get();
 };
+
+/// Constructs a CompletionHandle from a result future.
+[[nodiscard]] CompletionHandle make_completion_handle(
+    std::uint64_t id, std::future<RuntimeResult<CompletionResult>> future);
+
+// --- API error helpers ---
 
 inline ApiError invalid_request_error(std::string message,
                                       std::optional<std::string> param = std::nullopt,
@@ -195,6 +149,8 @@ inline ApiError auth_error(std::string message, std::optional<std::string> code 
     return ApiError{401, std::move(message), "auth_error", std::nullopt, std::move(code)};
 }
 
+// --- Request/response types ---
+
 struct ChatCompletionRequest {
     std::string model;
     std::vector<ChatMessage> messages;
@@ -221,6 +177,8 @@ struct SessionHealth {
     size_t max_sessions = 0;
     std::uint32_t idle_ttl_seconds = 0;
 };
+
+// --- Completion lifecycle ---
 
 /// RAII guard that invokes a cleanup callback exactly once, either on destruction or
 /// when `release()` is called explicitly, whichever comes first.

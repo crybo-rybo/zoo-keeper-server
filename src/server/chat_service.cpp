@@ -3,6 +3,7 @@
 #include "server/internal_utils.hpp"
 #include "server/zoo_adapter.hpp"
 
+#include <future>
 #include <mutex>
 #include <utility>
 
@@ -17,43 +18,20 @@ struct ConfiguredAgent {
     std::vector<ToolDefinition> tool_definitions;
 };
 
-class ZooCompletionSource final : public CompletionSource {
-  public:
-    explicit ZooCompletionSource(std::future<zoo::Expected<zoo::Response>> future)
-        : future_(std::move(future)) {}
-
-    [[nodiscard]] std::future_status wait_for(std::chrono::milliseconds timeout) const override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (consumed_) {
-            return std::future_status::ready;
-        }
-        return future_.wait_for(timeout);
-    }
-
-    RuntimeResult<CompletionResult> get() override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (consumed_) {
-            return std::unexpected(RuntimeError{
-                RuntimeErrorCode::RuntimeFailure,
-                "Completion result was already consumed",
-            });
-        }
-
-        consumed_ = true;
-        auto result = future_.get();
+/// Adapts a zoo::Expected<zoo::Response> future into a RuntimeResult<CompletionResult> future
+/// by converting the response (int→int64_t promotion for usage fields).
+std::future<RuntimeResult<CompletionResult>>
+adapt_zoo_future(std::future<zoo::Expected<zoo::Response>> zoo_future) {
+    return std::async(std::launch::deferred, [f = std::move(zoo_future)]() mutable {
+        auto result = f.get();
         if (!result) {
-            return std::unexpected(from_zoo_error(result.error()));
+            return RuntimeResult<CompletionResult>{std::unexpected(result.error())};
         }
-        return from_zoo_response(*result);
-    }
+        return RuntimeResult<CompletionResult>{from_zoo_response(*result)};
+    });
+}
 
-  private:
-    mutable std::mutex mutex_;
-    mutable std::future<zoo::Expected<zoo::Response>> future_;
-    bool consumed_ = false;
-};
-
-ConfiguredAgent configure_tools(ConfiguredAgent configured, const ToolProvider& tools) {
+Result<ConfiguredAgent> configure_tools(ConfiguredAgent configured, const ToolProvider& tools) {
     configured.tool_definitions.reserve(tools.tools.size());
 
     for (const auto& tool : tools.tools) {
@@ -63,13 +41,13 @@ ConfiguredAgent configure_tools(ConfiguredAgent configured, const ToolProvider& 
                  tool.invoke](const nlohmann::json& arguments) -> zoo::Expected<nlohmann::json> {
                 auto result = invoke(arguments);
                 if (!result) {
-                    return std::unexpected(to_zoo_error(result.error()));
+                    return std::unexpected(result.error());
                 }
                 return *result;
             });
         if (!register_result) {
-            throw std::runtime_error("Failed to register tool '" + tool.definition.name +
-                                     "': " + register_result.error().to_string());
+            return std::unexpected("Failed to register tool '" + tool.definition.name +
+                                   "': " + register_result.error().to_string());
         }
 
         configured.tool_definitions.push_back(tool.definition);
@@ -104,19 +82,12 @@ Result<ConfiguredAgent> create_configured_agent(const zoo::Config& base_config,
         .tool_definitions = {},
     };
 
-    try {
-        return configure_tools(std::move(configured), tools);
-    } catch (const std::exception& error) {
-        return std::unexpected(error.what());
-    }
+    return configure_tools(std::move(configured), tools);
 }
 
 CompletionHandle wrap_zoo_handle(zoo::RequestHandle handle) {
     const auto request_id = static_cast<std::uint64_t>(handle.id);
-    return CompletionHandle{
-        request_id,
-        std::make_shared<ZooCompletionSource>(std::move(handle.future)),
-    };
+    return make_completion_handle(request_id, adapt_zoo_future(std::move(handle.future)));
 }
 
 } // namespace
@@ -132,31 +103,24 @@ Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfi
         return std::unexpected(shared_result.error());
     }
 
-    std::shared_ptr<zoo::Agent> shared_agent = std::move(shared_result->agent);
-    auto session_manager = std::make_unique<SessionManager>(
+    auto shared_agent = std::move(shared_result->agent);
+    auto session_store = std::make_unique<SessionStore>(
         config.model_id, config.sessions, shared_result->request_system_prompt,
-        config.zoo_config.max_history_messages,
-        [agent = shared_agent](std::vector<ChatMessage> messages,
-                               std::optional<TokenCallback> callback) {
-            return wrap_zoo_handle(agent->complete(to_zoo_messages(messages), std::move(callback)));
-        },
-        [agent = shared_agent](std::uint64_t request_id) {
-            agent->cancel(static_cast<zoo::RequestId>(request_id));
-        });
+        config.zoo_config.max_history_messages);
 
     return std::make_shared<ZooChatService>(config.model_id,
                                             std::move(shared_result->request_system_prompt),
                                             std::move(shared_result->tool_definitions),
-                                            std::move(shared_agent), std::move(session_manager));
+                                            std::move(shared_agent), std::move(session_store));
 }
 
 ZooChatService::ZooChatService(std::string model_id, std::string request_system_prompt,
                                std::vector<ToolDefinition> tool_metadata,
                                std::shared_ptr<zoo::Agent> shared_agent,
-                               std::unique_ptr<SessionManager> session_manager)
+                               std::unique_ptr<SessionStore> session_store)
     : model_id_(std::move(model_id)), request_system_prompt_(std::move(request_system_prompt)),
       tool_metadata_(std::move(tool_metadata)), agent_(std::move(shared_agent)),
-      session_manager_(std::move(session_manager)) {}
+      session_store_(std::move(session_store)) {}
 
 ZooChatService::~ZooChatService() = default;
 
@@ -173,15 +137,14 @@ const std::vector<ToolDefinition>& ZooChatService::tools() const noexcept {
 }
 
 SessionHealth ZooChatService::session_health() const noexcept {
-    return session_manager_ ? session_manager_->health() : SessionHealth{};
+    return session_store_ ? session_store_->health() : SessionHealth{};
 }
 
 ApiResult<PendingChatCompletion>
 ZooChatService::start_completion(const ChatCompletionRequest& request,
                                  std::optional<TokenCallback> callback) {
     if (request.session_id.has_value()) {
-        return session_manager_->start_completion(request, next_completion_id_,
-                                                  std::move(callback));
+        return start_session_completion(request, std::move(callback));
     }
 
     if (!is_ready()) {
@@ -193,8 +156,8 @@ ZooChatService::start_completion(const ChatCompletionRequest& request,
             invalid_request_error("Unknown model: " + request.model, "model", "invalid_model"));
     }
 
-    auto handle = wrap_zoo_handle(
-        agent_->complete(to_zoo_messages(prepare_messages(request)), std::move(callback)));
+    auto handle =
+        wrap_zoo_handle(agent_->complete(prepare_messages(request), std::move(callback)));
     const auto request_id = handle.id;
     const auto created = now_seconds();
     const auto completion_id =
@@ -215,31 +178,77 @@ ZooChatService::start_completion(const ChatCompletionRequest& request,
     };
 }
 
+ApiResult<PendingChatCompletion>
+ZooChatService::start_session_completion(const ChatCompletionRequest& request,
+                                         std::optional<TokenCallback> callback) {
+    if (!is_ready()) {
+        return std::unexpected(
+            service_unavailable_error("Server runtime is not ready", "not_ready"));
+    }
+
+    // Use completion counter as the session request tracking ID.
+    const auto tracking_id =
+        next_completion_id_.fetch_add(1, std::memory_order_relaxed);
+
+    auto begin = session_store_->begin_request(request, tracking_id);
+    if (!begin) {
+        return std::unexpected(begin.error());
+    }
+
+    auto handle =
+        wrap_zoo_handle(agent_->complete(std::move(begin->messages), std::move(callback)));
+    const auto zoo_request_id = handle.id;
+    const auto completion_id = "chatcmpl-" + std::to_string(tracking_id);
+    const auto session_id = *request.session_id;
+
+    auto lease = std::make_shared<CompletionLease>(
+        [store = session_store_.get(), session_id, tracking_id] {
+            store->release_request(session_id, tracking_id);
+        });
+
+    return PendingChatCompletion{
+        completion_id,
+        begin->started_at,
+        model_id_,
+        std::move(handle),
+        [store = session_store_.get(), session_id, tracking_id,
+         user_message = begin->user_message](const RuntimeResult<CompletionResult>& result) {
+            store->commit_result(session_id, tracking_id, user_message, result);
+        },
+        [agent = agent_, zoo_request_id] {
+            if (agent) {
+                agent->cancel(static_cast<zoo::RequestId>(zoo_request_id));
+            }
+        },
+        std::move(lease),
+    };
+}
+
 ApiResult<SessionSummary> ZooChatService::create_session(const SessionCreateRequest& request) {
     if (!is_ready()) {
         return std::unexpected(
             service_unavailable_error("Server runtime is not ready", "agent_not_ready"));
     }
-    return session_manager_->create_session(request);
+    return session_store_->create_session(request);
 }
 
 ApiResult<SessionSummary> ZooChatService::get_session(std::string_view session_id) {
-    return session_manager_->get_session(session_id);
+    return session_store_->get_session(session_id);
 }
 
 ApiResult<void> ZooChatService::delete_session(std::string_view session_id) {
-    return session_manager_->delete_session(session_id);
+    return session_store_->delete_session(session_id);
 }
 
 void ZooChatService::reap_sessions() noexcept {
-    if (session_manager_) {
-        session_manager_->reap_expired_sessions();
+    if (session_store_) {
+        session_store_->reap_expired_sessions();
     }
 }
 
 void ZooChatService::stop() {
-    if (session_manager_) {
-        session_manager_->stop();
+    if (session_store_) {
+        session_store_->stop();
     }
     if (agent_) {
         agent_->stop();
@@ -249,7 +258,7 @@ void ZooChatService::stop() {
 std::vector<ChatMessage>
 ZooChatService::prepare_messages(const ChatCompletionRequest& request) const {
     if (request_system_prompt_.empty()) {
-        return request.messages; // copy only when needed (RVO applies)
+        return request.messages;
     }
 
     std::vector<ChatMessage> messages;

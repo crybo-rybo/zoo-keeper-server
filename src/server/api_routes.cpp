@@ -102,10 +102,10 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime, std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
                 return;
             }
-            with_metrics(runtime, std::move(callback))(
+            with_metrics(runtime->metrics(), std::move(callback))(
                 make_models_response(runtime->chat_service().model_id()));
         },
         {drogon::Get});
@@ -121,10 +121,10 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime, std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
                 return;
             }
-            with_metrics(runtime,
+            with_metrics(runtime->metrics(),
                          std::move(callback))(make_tools_response(runtime->chat_service().tools()));
         },
         {drogon::Get});
@@ -140,10 +140,10 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime, std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
                 return;
             }
-            auto cb = with_metrics(runtime, std::move(callback));
+            auto cb = with_metrics(runtime->metrics(), std::move(callback));
             auto parsed_request = parse_session_create_request(request->body());
             if (!parsed_request) {
                 cb(make_error_response(parsed_request.error()));
@@ -172,10 +172,10 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime, std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
                 return;
             }
-            auto cb = with_metrics(runtime, std::move(callback));
+            auto cb = with_metrics(runtime->metrics(), std::move(callback));
             auto session = runtime->chat_service().get_session(session_id);
             if (!session) {
                 cb(make_error_response(session.error()));
@@ -198,10 +198,10 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime, std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
                 return;
             }
-            auto cb = with_metrics(runtime, std::move(callback));
+            auto cb = with_metrics(runtime->metrics(), std::move(callback));
             auto deleted = runtime->chat_service().delete_session(session_id);
             if (!deleted) {
                 cb(make_error_response(deleted.error()));
@@ -225,10 +225,10 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime, std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
                 return;
             }
-            with_metrics(runtime, std::move(callback))(
+            with_metrics(runtime->metrics(), std::move(callback))(
                 make_json_response(runtime->metrics_snapshot().to_json()));
         },
         {drogon::Get});

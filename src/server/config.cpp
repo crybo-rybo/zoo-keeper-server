@@ -4,7 +4,6 @@
 
 #include <array>
 #include <fstream>
-#include <sstream>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -19,6 +18,16 @@ bool is_trusted_local_bind_address(std::string_view bind_address) {
 
 std::string with_path_context(const std::filesystem::path& path, const std::string& message) {
     return path.string() + ": " + message;
+}
+
+// Wraps the shared reject_unknown_keys (returns Result<void>) for use in from_json
+// where we throw on failure.
+void check_unknown_keys(const nlohmann::json& json, std::string_view context,
+                        std::span<const std::string_view> allowed_keys) {
+    auto result = reject_unknown_keys(json, context, allowed_keys);
+    if (!result) {
+        throw nlohmann::json::other_error::create(501, result.error(), nullptr);
+    }
 }
 
 } // namespace
@@ -74,6 +83,176 @@ Result<void> ServerConfig::validate() const {
     return {};
 }
 
+// --- nlohmann from_json ADL customization ---
+
+void from_json(const nlohmann::json& j, HttpConfig& config) {
+    static constexpr std::array<std::string_view, 4> kAllowed = {
+        "client_max_body_size_bytes", "client_max_memory_body_size_bytes",
+        "idle_connection_timeout_seconds", "cors_allow_origins"};
+    check_unknown_keys(j, "http config", kAllowed);
+
+    if (auto it = j.find("client_max_body_size_bytes"); it != j.end()) {
+        it->get_to(config.client_max_body_size_bytes);
+    }
+    if (auto it = j.find("client_max_memory_body_size_bytes"); it != j.end()) {
+        it->get_to(config.client_max_memory_body_size_bytes);
+    }
+    if (auto it = j.find("idle_connection_timeout_seconds"); it != j.end()) {
+        it->get_to(config.idle_connection_timeout_seconds);
+    }
+    if (auto it = j.find("cors_allow_origins"); it != j.end()) {
+        if (!it->is_array()) {
+            throw nlohmann::json::type_error::create(302, "http.cors_allow_origins must be an array",
+                                                     nullptr);
+        }
+        for (const auto& origin : *it) {
+            if (!origin.is_string()) {
+                throw nlohmann::json::type_error::create(
+                    302, "http.cors_allow_origins entries must be strings", nullptr);
+            }
+            config.cors_allow_origins.push_back(origin.get<std::string>());
+        }
+    }
+}
+
+void from_json(const nlohmann::json& j, SessionConfig& config) {
+    static constexpr std::array<std::string_view, 2> kAllowed = {"max_sessions",
+                                                                   "idle_ttl_seconds"};
+    check_unknown_keys(j, "sessions config", kAllowed);
+
+    if (auto it = j.find("max_sessions"); it != j.end()) {
+        it->get_to(config.max_sessions);
+    }
+    if (auto it = j.find("idle_ttl_seconds"); it != j.end()) {
+        it->get_to(config.idle_ttl_seconds);
+    }
+}
+
+void from_json(const nlohmann::json& j, CommandToolConfig& tool) {
+    static constexpr std::array<std::string_view, 8> kAllowed = {
+        "name", "description", "parameters",         "command", "working_directory",
+        "env",  "timeout_ms",  "inherit_environment"};
+    check_unknown_keys(j, "tool config", kAllowed);
+
+    auto require_string = [&](const char* field) -> std::string {
+        if (!j.contains(field) || !j.at(field).is_string()) {
+            throw nlohmann::json::type_error::create(
+                302, std::string(field) + " must be a string", nullptr);
+        }
+        return j.at(field).get<std::string>();
+    };
+
+    tool.name = require_string("name");
+    tool.description = require_string("description");
+
+    if (!j.contains("parameters") || !j.at("parameters").is_object()) {
+        throw nlohmann::json::type_error::create(302, "parameters must be an object", nullptr);
+    }
+    tool.parameters_schema = j.at("parameters");
+
+    if (!j.contains("command") || !j.at("command").is_array()) {
+        throw nlohmann::json::type_error::create(302, "command must be an array", nullptr);
+    }
+    for (const auto& arg : j.at("command")) {
+        if (!arg.is_string()) {
+            throw nlohmann::json::type_error::create(302, "command entries must be strings",
+                                                     nullptr);
+        }
+        tool.command.push_back(arg.get<std::string>());
+    }
+
+    if (auto it = j.find("working_directory"); it != j.end()) {
+        if (!it->is_string()) {
+            throw nlohmann::json::type_error::create(302, "working_directory must be a string",
+                                                     nullptr);
+        }
+        tool.working_directory = it->get<std::string>();
+    }
+    if (auto it = j.find("env"); it != j.end()) {
+        if (!it->is_object()) {
+            throw nlohmann::json::type_error::create(302, "env must be an object", nullptr);
+        }
+        for (auto env_it = it->begin(); env_it != it->end(); ++env_it) {
+            if (!env_it.value().is_string()) {
+                throw nlohmann::json::type_error::create(302, "env values must be strings",
+                                                         nullptr);
+            }
+            tool.env.emplace(env_it.key(), env_it.value().get<std::string>());
+        }
+    }
+    if (auto it = j.find("inherit_environment"); it != j.end()) {
+        if (!it->is_boolean()) {
+            throw nlohmann::json::type_error::create(302, "inherit_environment must be a boolean",
+                                                     nullptr);
+        }
+        tool.inherit_environment = it->get<bool>();
+    }
+    if (auto it = j.find("timeout_ms"); it != j.end()) {
+        if (!it->is_number_unsigned()) {
+            throw nlohmann::json::type_error::create(302, "timeout_ms must be a positive integer",
+                                                     nullptr);
+        }
+        tool.timeout_ms = it->get<std::uint32_t>();
+    }
+}
+
+void from_json(const nlohmann::json& j, ServerConfig& config) {
+    static constexpr std::array<std::string_view, 8> kAllowed = {
+        "bind_address", "port", "model_id", "api_key", "http", "sessions", "tools", "zoo"};
+    check_unknown_keys(j, "server config", kAllowed);
+
+    if (auto it = j.find("bind_address"); it != j.end()) {
+        it->get_to(config.bind_address);
+    }
+    if (auto it = j.find("port"); it != j.end()) {
+        unsigned int parsed_port = 0;
+        it->get_to(parsed_port);
+        if (parsed_port == 0 || parsed_port > 65535) {
+            throw nlohmann::json::out_of_range::create(401, "port must be in the range [1, 65535]",
+                                                       nullptr);
+        }
+        config.port = static_cast<uint16_t>(parsed_port);
+    }
+    if (!j.contains("model_id")) {
+        throw nlohmann::json::other_error::create(
+            501, "Server config must contain required key: model_id", nullptr);
+    }
+    j.at("model_id").get_to(config.model_id);
+
+    if (auto it = j.find("api_key"); it != j.end()) {
+        if (!it->is_null()) {
+            if (!it->is_string()) {
+                throw nlohmann::json::type_error::create(302, "api_key must be a string", nullptr);
+            }
+            config.api_key = it->get<std::string>();
+        }
+    }
+    if (auto it = j.find("http"); it != j.end()) {
+        config.http = it->get<HttpConfig>();
+    }
+    if (auto it = j.find("sessions"); it != j.end()) {
+        config.sessions = it->get<SessionConfig>();
+    }
+    if (auto it = j.find("tools"); it != j.end()) {
+        if (!it->is_array()) {
+            throw nlohmann::json::type_error::create(302, "tools must be an array", nullptr);
+        }
+        for (size_t i = 0; i < it->size(); ++i) {
+            try {
+                config.tools.push_back((*it)[i].get<CommandToolConfig>());
+            } catch (const std::exception& e) {
+                throw nlohmann::json::other_error::create(
+                    501, "tools[" + std::to_string(i) + "]: " + e.what(), nullptr);
+            }
+        }
+    }
+    if (!j.contains("zoo")) {
+        throw nlohmann::json::other_error::create(
+            501, "Server config must contain required key: zoo", nullptr);
+    }
+    config.zoo_config = j.at("zoo").get<zoo::Config>();
+}
+
 Result<ServerConfig> load_config(const std::filesystem::path& path) {
     std::ifstream input(path);
     if (!input) {
@@ -87,187 +266,8 @@ Result<ServerConfig> load_config(const std::filesystem::path& path) {
         return std::unexpected(with_path_context(path, error.what()));
     }
 
-    static constexpr std::array<std::string_view, 8> kAllowedKeys = {
-        "bind_address", "port", "model_id", "api_key", "http", "sessions", "tools", "zoo"};
-
-    if (auto unknown_key_check = reject_unknown_keys(json, "server config", kAllowedKeys);
-        !unknown_key_check) {
-        return std::unexpected(with_path_context(path, unknown_key_check.error()));
-    }
-
     try {
-        ServerConfig config;
-        if (auto it = json.find("bind_address"); it != json.end()) {
-            it->get_to(config.bind_address);
-        }
-        if (auto it = json.find("port"); it != json.end()) {
-            unsigned int parsed_port = 0;
-            it->get_to(parsed_port);
-            if (parsed_port == 0 || parsed_port > 65535) {
-                return std::unexpected(
-                    with_path_context(path, "port must be in the range [1, 65535]"));
-            }
-            config.port = static_cast<uint16_t>(parsed_port);
-        }
-        if (!json.contains("model_id")) {
-            return std::unexpected(
-                with_path_context(path, "Server config must contain required key: model_id"));
-        }
-        json.at("model_id").get_to(config.model_id);
-        if (auto it = json.find("api_key"); it != json.end()) {
-            if (!it->is_null()) {
-                if (!it->is_string()) {
-                    return std::unexpected(with_path_context(path, "api_key must be a string"));
-                }
-                config.api_key = it->get<std::string>();
-            }
-        }
-        if (auto it = json.find("http"); it != json.end()) {
-            static constexpr std::array<std::string_view, 4> kAllowedHttpKeys = {
-                "client_max_body_size_bytes", "client_max_memory_body_size_bytes",
-                "idle_connection_timeout_seconds", "cors_allow_origins"};
-            if (auto unknown_keys = reject_unknown_keys(*it, "http config", kAllowedHttpKeys);
-                !unknown_keys) {
-                return std::unexpected(with_path_context(path, unknown_keys.error()));
-            }
-
-            if (auto http_it = it->find("client_max_body_size_bytes"); http_it != it->end()) {
-                http_it->get_to(config.http.client_max_body_size_bytes);
-            }
-            if (auto http_it = it->find("client_max_memory_body_size_bytes");
-                http_it != it->end()) {
-                http_it->get_to(config.http.client_max_memory_body_size_bytes);
-            }
-            if (auto http_it = it->find("idle_connection_timeout_seconds"); http_it != it->end()) {
-                http_it->get_to(config.http.idle_connection_timeout_seconds);
-            }
-            if (auto http_it = it->find("cors_allow_origins"); http_it != it->end()) {
-                if (!http_it->is_array()) {
-                    return std::unexpected(
-                        with_path_context(path, "http.cors_allow_origins must be an array"));
-                }
-                for (const auto& origin : *http_it) {
-                    if (!origin.is_string()) {
-                        return std::unexpected(with_path_context(
-                            path, "http.cors_allow_origins entries must be strings"));
-                    }
-                    config.http.cors_allow_origins.push_back(origin.get<std::string>());
-                }
-            }
-        }
-        if (auto it = json.find("sessions"); it != json.end()) {
-            static constexpr std::array<std::string_view, 2> kAllowedSessionKeys = {
-                "max_sessions", "idle_ttl_seconds"};
-            if (auto unknown_keys =
-                    reject_unknown_keys(*it, "sessions config", kAllowedSessionKeys);
-                !unknown_keys) {
-                return std::unexpected(with_path_context(path, unknown_keys.error()));
-            }
-
-            if (auto session_it = it->find("max_sessions"); session_it != it->end()) {
-                session_it->get_to(config.sessions.max_sessions);
-            }
-            if (auto session_it = it->find("idle_ttl_seconds"); session_it != it->end()) {
-                session_it->get_to(config.sessions.idle_ttl_seconds);
-            }
-        }
-        if (auto it = json.find("tools"); it != json.end()) {
-            if (!it->is_array()) {
-                return std::unexpected(with_path_context(path, "tools must be an array"));
-            }
-
-            for (size_t index = 0; index < it->size(); ++index) {
-                const auto& tool_json = (*it)[index];
-                static constexpr std::array<std::string_view, 8> kAllowedToolKeys = {
-                    "name", "description", "parameters",         "command", "working_directory",
-                    "env",  "timeout_ms",  "inherit_environment"};
-                if (auto unknown_keys =
-                        reject_unknown_keys(tool_json, "tool config", kAllowedToolKeys);
-                    !unknown_keys) {
-                    return std::unexpected(with_path_context(path, unknown_keys.error()));
-                }
-                if (!tool_json.contains("name") || !tool_json.at("name").is_string()) {
-                    return std::unexpected(with_path_context(
-                        path, "tools[" + std::to_string(index) + "].name must be a string"));
-                }
-                if (!tool_json.contains("description") ||
-                    !tool_json.at("description").is_string()) {
-                    return std::unexpected(with_path_context(
-                        path, "tools[" + std::to_string(index) + "].description must be a string"));
-                }
-                if (!tool_json.contains("parameters") || !tool_json.at("parameters").is_object()) {
-                    return std::unexpected(with_path_context(
-                        path, "tools[" + std::to_string(index) + "].parameters must be an object"));
-                }
-                if (!tool_json.contains("command") || !tool_json.at("command").is_array()) {
-                    return std::unexpected(with_path_context(
-                        path, "tools[" + std::to_string(index) + "].command must be an array"));
-                }
-
-                CommandToolConfig tool;
-                tool.name = tool_json.at("name").get<std::string>();
-                tool.description = tool_json.at("description").get<std::string>();
-                tool.parameters_schema = tool_json.at("parameters");
-
-                for (const auto& arg_json : tool_json.at("command")) {
-                    if (!arg_json.is_string()) {
-                        return std::unexpected(
-                            with_path_context(path, "tools[" + std::to_string(index) +
-                                                        "].command entries must be strings"));
-                    }
-                    tool.command.push_back(arg_json.get<std::string>());
-                }
-
-                if (auto dir_it = tool_json.find("working_directory"); dir_it != tool_json.end()) {
-                    if (!dir_it->is_string()) {
-                        return std::unexpected(
-                            with_path_context(path, "tools[" + std::to_string(index) +
-                                                        "].working_directory must be a string"));
-                    }
-                    tool.working_directory = dir_it->get<std::string>();
-                }
-                if (auto env_it = tool_json.find("env"); env_it != tool_json.end()) {
-                    if (!env_it->is_object()) {
-                        return std::unexpected(with_path_context(
-                            path, "tools[" + std::to_string(index) + "].env must be an object"));
-                    }
-                    for (auto env_value = env_it->begin(); env_value != env_it->end();
-                         ++env_value) {
-                        if (!env_value.value().is_string()) {
-                            return std::unexpected(
-                                with_path_context(path, "tools[" + std::to_string(index) +
-                                                            "].env values must be strings"));
-                        }
-                        tool.env.emplace(env_value.key(), env_value.value().get<std::string>());
-                    }
-                }
-                if (auto inherit_it = tool_json.find("inherit_environment");
-                    inherit_it != tool_json.end()) {
-                    if (!inherit_it->is_boolean()) {
-                        return std::unexpected(
-                            with_path_context(path, "tools[" + std::to_string(index) +
-                                                        "].inherit_environment must be a boolean"));
-                    }
-                    tool.inherit_environment = inherit_it->get<bool>();
-                }
-                if (auto timeout_it = tool_json.find("timeout_ms"); timeout_it != tool_json.end()) {
-                    if (!timeout_it->is_number_unsigned()) {
-                        return std::unexpected(
-                            with_path_context(path, "tools[" + std::to_string(index) +
-                                                        "].timeout_ms must be a positive integer"));
-                    }
-                    tool.timeout_ms = timeout_it->get<std::uint32_t>();
-                }
-
-                config.tools.push_back(std::move(tool));
-            }
-        }
-        if (!json.contains("zoo")) {
-            return std::unexpected(
-                with_path_context(path, "Server config must contain required key: zoo"));
-        }
-        config.zoo_config = json.at("zoo").get<zoo::Config>();
-
+        auto config = json.get<ServerConfig>();
         if (auto validation = config.validate(); !validation) {
             return std::unexpected(with_path_context(path, validation.error()));
         }

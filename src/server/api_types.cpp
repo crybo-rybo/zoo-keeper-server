@@ -3,33 +3,7 @@
 namespace zks::server {
 
 std::string_view to_string(MessageRole role) noexcept {
-    switch (role) {
-    case MessageRole::System:
-        return "system";
-    case MessageRole::User:
-        return "user";
-    case MessageRole::Assistant:
-        return "assistant";
-    case MessageRole::Tool:
-        return "tool";
-    }
-    return "unknown";
-}
-
-ChatMessage ChatMessage::system(std::string content) {
-    return ChatMessage{MessageRole::System, std::move(content), std::nullopt};
-}
-
-ChatMessage ChatMessage::user(std::string content) {
-    return ChatMessage{MessageRole::User, std::move(content), std::nullopt};
-}
-
-ChatMessage ChatMessage::assistant(std::string content) {
-    return ChatMessage{MessageRole::Assistant, std::move(content), std::nullopt};
-}
-
-ChatMessage ChatMessage::tool(std::string content, std::string tool_call_id) {
-    return ChatMessage{MessageRole::Tool, std::move(content), std::move(tool_call_id)};
+    return zoo::role_to_string(role);
 }
 
 Result<void> validate_message_sequence(const std::vector<ChatMessage>& history,
@@ -53,31 +27,38 @@ Result<void> validate_message_sequence(const std::vector<ChatMessage>& history,
     return {};
 }
 
-std::string_view to_string(ToolInvocationStatus status) noexcept {
-    switch (status) {
-    case ToolInvocationStatus::Succeeded:
-        return "succeeded";
-    case ToolInvocationStatus::ValidationFailed:
-        return "validation_failed";
-    case ToolInvocationStatus::ExecutionFailed:
-        return "execution_failed";
-    }
-    return "unknown";
-}
-
 std::future_status CompletionHandle::wait_for(std::chrono::milliseconds timeout) const {
-    if (!source) {
+    if (!state) {
         return std::future_status::ready;
     }
-    return source->wait_for(timeout);
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (state->consumed) {
+        return std::future_status::ready;
+    }
+    return state->future.wait_for(timeout);
 }
 
 RuntimeResult<CompletionResult> CompletionHandle::get() {
-    if (!source) {
+    if (!state) {
         return std::unexpected(
-            RuntimeError{RuntimeErrorCode::RuntimeFailure, "Completion handle is not ready"});
+            RuntimeError{RuntimeErrorCode::Unknown, "Completion handle is not ready"});
     }
-    return source->get();
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (state->consumed) {
+        return std::unexpected(RuntimeError{
+            RuntimeErrorCode::Unknown,
+            "Completion result was already consumed",
+        });
+    }
+    state->consumed = true;
+    return state->future.get();
+}
+
+CompletionHandle make_completion_handle(std::uint64_t id,
+                                        std::future<RuntimeResult<CompletionResult>> future) {
+    auto s = std::make_shared<CompletionState>();
+    s->future = std::move(future);
+    return CompletionHandle{id, std::move(s)};
 }
 
 } // namespace zks::server
