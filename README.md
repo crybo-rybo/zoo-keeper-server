@@ -267,12 +267,12 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
 ## Architecture
 
 ```text
-HTTP Request → api_routes.cpp → ChatService → SessionManager (optional)
-                                           → zoo::Agent → llama.cpp
-                                                       → SSE or JSON response
+HTTP Request → api_routes.cpp → ZooChatService → SessionStore (optional)
+                                               → zoo::Agent → llama.cpp
+                                                             → SSE or JSON response
 ```
 
-One `zoo::Agent` is loaded at startup and shared across all requests. Sessions do not get their own agent instances — history is managed in `SessionManager` and injected per-request.
+One `zoo::Agent` is loaded at startup and shared across all requests. Sessions do not get their own agent instances — history is managed in `SessionStore` and injected per-request by `ZooChatService`.
 
 ## Known Limitations
 
