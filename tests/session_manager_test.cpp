@@ -31,9 +31,10 @@ class FakeAgent {
         auto future = request->promise.get_future();
 
         // Wrap in RuntimeResult future
-        using Result = zks::server::RuntimeResult<zks::server::CompletionResult>;
         auto result_future = std::async(
-            std::launch::deferred, [f = std::move(future)]() mutable -> Result { return f.get(); });
+            std::launch::deferred,
+            [f = std::move(future)]() mutable
+                -> zks::server::RuntimeResult<zks::server::CompletionResult> { return f.get(); });
 
         std::lock_guard<std::mutex> lock(mutex_);
         requests_.push_back(request);
