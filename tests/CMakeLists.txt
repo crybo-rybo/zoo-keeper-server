@@ -1,5 +1,3 @@
-include(FetchContent)
-
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     googletest

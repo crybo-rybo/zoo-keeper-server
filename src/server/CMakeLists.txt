@@ -1,8 +1,5 @@
-set(ZKS_SERVER_VERSION_DIR "${PROJECT_BINARY_DIR}/src/server")
-set(ZKS_SERVER_VERSION_HEADER "${ZKS_SERVER_VERSION_DIR}/version.hpp")
-
-file(MAKE_DIRECTORY "${ZKS_SERVER_VERSION_DIR}")
-configure_file(version.hpp.in "${ZKS_SERVER_VERSION_HEADER}" @ONLY)
+configure_file(version.hpp.in
+    "${PROJECT_BINARY_DIR}/src/server/version.hpp" @ONLY)
 
 add_library(zks_server_core
     api_types.cpp
@@ -35,30 +32,39 @@ target_link_libraries(zks_server_core PUBLIC
 if(ZKS_ENABLE_TEST_UI)
     find_program(ZKS_XXD xxd REQUIRED)
 
-    function(zks_embed_xxd output input symbol)
-        get_filename_component(input_name "${input}" NAME)
-        add_custom_command(
-            OUTPUT "${output}"
-            COMMAND
-                ${CMAKE_COMMAND}
-                "-DXXD=${ZKS_XXD}"
-                "-DINPUT=${input}"
-                "-DOUTPUT=${output}"
-                "-DSYMBOL=${symbol}"
-                -P "${PROJECT_SOURCE_DIR}/cmake/EmbedXxd.cmake"
-            DEPENDS "${input}" "${PROJECT_SOURCE_DIR}/cmake/EmbedXxd.cmake"
-            COMMENT "Embedding ${input_name}"
-            VERBATIM
-        )
-    endfunction()
-
     set(ZKS_TEST_UI_HTML_CPP "${CMAKE_CURRENT_BINARY_DIR}/test_ui_html_content.cpp")
     set(ZKS_TEST_UI_JS_CPP "${CMAKE_CURRENT_BINARY_DIR}/test_ui_js_content.cpp")
 
-    zks_embed_xxd("${ZKS_TEST_UI_HTML_CPP}" "${CMAKE_CURRENT_SOURCE_DIR}/test_ui.html"
-        "kTestUiHtmlData")
-    zks_embed_xxd("${ZKS_TEST_UI_JS_CPP}" "${CMAKE_CURRENT_SOURCE_DIR}/test_ui.js"
-        "kTestUiJsData")
+    add_custom_command(
+        OUTPUT "${ZKS_TEST_UI_HTML_CPP}"
+        COMMAND
+            ${CMAKE_COMMAND}
+            "-DXXD=${ZKS_XXD}"
+            "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/test_ui.html"
+            "-DOUTPUT=${ZKS_TEST_UI_HTML_CPP}"
+            "-DSYMBOL=kTestUiHtmlData"
+            -P "${PROJECT_SOURCE_DIR}/cmake/EmbedXxd.cmake"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_ui.html"
+            "${PROJECT_SOURCE_DIR}/cmake/EmbedXxd.cmake"
+        COMMENT "Embedding test_ui.html"
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT "${ZKS_TEST_UI_JS_CPP}"
+        COMMAND
+            ${CMAKE_COMMAND}
+            "-DXXD=${ZKS_XXD}"
+            "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/test_ui.js"
+            "-DOUTPUT=${ZKS_TEST_UI_JS_CPP}"
+            "-DSYMBOL=kTestUiJsData"
+            -P "${PROJECT_SOURCE_DIR}/cmake/EmbedXxd.cmake"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_ui.js"
+            "${PROJECT_SOURCE_DIR}/cmake/EmbedXxd.cmake"
+        COMMENT "Embedding test_ui.js"
+        VERBATIM
+    )
 
     target_sources(zks_server_core PRIVATE
         test_ui.cpp

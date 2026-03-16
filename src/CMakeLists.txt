@@ -1,6 +1,7 @@
 add_subdirectory(server)
 
 add_executable(zoo_keeper_server main.cpp)
+target_compile_features(zoo_keeper_server PRIVATE cxx_std_23)
 target_link_libraries(zoo_keeper_server PRIVATE zks_server_core)
 
 add_executable(zoo_keeper_link_smoke link_smoke.cpp)
