@@ -33,13 +33,13 @@ class FakeAgent {
         // Wrap in RuntimeResult future
         auto result_future = std::async(
             std::launch::deferred,
-            [f = std::move(future)]() mutable -> zks::server::RuntimeResult<zks::server::CompletionResult> {
-                return f.get();
-            });
+            [f = std::move(future)]() mutable
+                -> zks::server::RuntimeResult<zks::server::CompletionResult> { return f.get(); });
 
         std::lock_guard<std::mutex> lock(mutex_);
         requests_.push_back(request);
-        return {zks::server::make_completion_handle(request->id, std::move(result_future)), request};
+        return {zks::server::make_completion_handle(request->id, std::move(result_future)),
+                request};
     }
 
     void cancel(std::uint64_t request_id) {
@@ -78,8 +78,8 @@ zks::server::ChatCompletionRequest make_chat_request(const std::string& session_
 }
 
 std::unique_ptr<zks::server::SessionStore>
-make_session_store(std::string base_prompt = "Base prompt",
-                   size_t max_history_messages = 64, size_t max_sessions = 4) {
+make_session_store(std::string base_prompt = "Base prompt", size_t max_history_messages = 64,
+                   size_t max_sessions = 4) {
     zks::server::SessionConfig config;
     config.max_sessions = max_sessions;
     config.idle_ttl_seconds = 600;
@@ -98,8 +98,8 @@ struct StartedRequest {
 };
 
 StartedRequest start_request(zks::server::SessionStore& store, FakeAgent& agent,
-                              std::atomic<std::uint64_t>& next_id,
-                              const std::string& session_id, const std::string& content) {
+                             std::atomic<std::uint64_t>& next_id, const std::string& session_id,
+                             const std::string& content) {
     auto request = make_chat_request(session_id, content);
     auto tracking_id = next_id.fetch_add(1, std::memory_order_relaxed);
     auto begin = store.begin_request(request, tracking_id);
@@ -107,8 +107,8 @@ StartedRequest start_request(zks::server::SessionStore& store, FakeAgent& agent,
 
     auto [handle, submitted] = agent.complete(std::move(begin->messages));
 
-    return StartedRequest{std::move(handle), submitted, tracking_id,
-                          begin->user_message, session_id};
+    return StartedRequest{std::move(handle), submitted, tracking_id, begin->user_message,
+                          session_id};
 }
 
 void finish_and_commit(zks::server::SessionStore& store, StartedRequest& started,

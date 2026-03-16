@@ -128,11 +128,10 @@ class StreamingSession {
                 return;
             }
 
-            auto frame = !sent_role_
-                             ? make_first_streaming_chunk(completion_id_, created_, model_id_,
-                                                         token, std::nullopt)
-                             : make_streaming_chunk(completion_id_, created_, model_id_, token,
-                                                    std::nullopt);
+            auto frame = !sent_role_ ? make_first_streaming_chunk(completion_id_, created_,
+                                                                  model_id_, token, std::nullopt)
+                                     : make_streaming_chunk(completion_id_, created_, model_id_,
+                                                            token, std::nullopt);
             sent_role_ = true;
             sent_content_ = true;
             deferred = push_frame_locked(std::move(frame));
@@ -164,8 +163,8 @@ class StreamingSession {
                 sent_content_ = true;
             }
 
-            all_deferred.push_back(push_frame_locked(make_streaming_chunk(
-                completion_id_, created_, model_id_, std::nullopt, "stop")));
+            all_deferred.push_back(push_frame_locked(
+                make_streaming_chunk(completion_id_, created_, model_id_, std::nullopt, "stop")));
             all_deferred.push_back(push_frame_locked(make_sse_done()));
         }
 
@@ -458,7 +457,8 @@ void register_chat_completion_route(
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(),
+                             std::move(callback))(make_error_response(*auth_err));
                 return;
             }
             auto cb = with_metrics(runtime->metrics(), std::move(callback));

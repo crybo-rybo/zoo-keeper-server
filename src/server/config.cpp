@@ -102,8 +102,8 @@ void from_json(const nlohmann::json& j, HttpConfig& config) {
     }
     if (auto it = j.find("cors_allow_origins"); it != j.end()) {
         if (!it->is_array()) {
-            throw nlohmann::json::type_error::create(302, "http.cors_allow_origins must be an array",
-                                                     nullptr);
+            throw nlohmann::json::type_error::create(
+                302, "http.cors_allow_origins must be an array", nullptr);
         }
         for (const auto& origin : *it) {
             if (!origin.is_string()) {
@@ -117,7 +117,7 @@ void from_json(const nlohmann::json& j, HttpConfig& config) {
 
 void from_json(const nlohmann::json& j, SessionConfig& config) {
     static constexpr std::array<std::string_view, 2> kAllowed = {"max_sessions",
-                                                                   "idle_ttl_seconds"};
+                                                                 "idle_ttl_seconds"};
     check_unknown_keys(j, "sessions config", kAllowed);
 
     if (auto it = j.find("max_sessions"); it != j.end()) {
@@ -136,8 +136,8 @@ void from_json(const nlohmann::json& j, CommandToolConfig& tool) {
 
     auto require_string = [&](const char* field) -> std::string {
         if (!j.contains(field) || !j.at(field).is_string()) {
-            throw nlohmann::json::type_error::create(
-                302, std::string(field) + " must be a string", nullptr);
+            throw nlohmann::json::type_error::create(302, std::string(field) + " must be a string",
+                                                     nullptr);
         }
         return j.at(field).get<std::string>();
     };

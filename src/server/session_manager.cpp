@@ -54,8 +54,7 @@ void log_session_event(std::string_view event, std::string_view session_id,
 } // namespace
 
 SessionStore::SessionStore(std::string model_id, SessionConfig config,
-                           std::string base_system_prompt, size_t max_history_messages,
-                           Clock clock)
+                           std::string base_system_prompt, size_t max_history_messages, Clock clock)
     : model_id_(std::move(model_id)), config_(config),
       base_system_prompt_(std::move(base_system_prompt)),
       max_history_messages_(max_history_messages), clock_(std::move(clock)) {}
@@ -226,8 +225,8 @@ ApiResult<void> SessionStore::delete_session(std::string_view session_id) {
     return {};
 }
 
-ApiResult<BeginRequestResult>
-SessionStore::begin_request(const ChatCompletionRequest& request, std::uint64_t request_id) {
+ApiResult<BeginRequestResult> SessionStore::begin_request(const ChatCompletionRequest& request,
+                                                          std::uint64_t request_id) {
     if (!enabled()) {
         return std::unexpected(disabled_error());
     }

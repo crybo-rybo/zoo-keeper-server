@@ -20,8 +20,7 @@ ApiResult<void> reject_api_unknown_keys(const nlohmann::json& json, const char* 
     }
     auto result = reject_unknown_keys(json, context, std::span<const std::string_view>(sv_keys));
     if (!result) {
-        return std::unexpected(
-            invalid_request_error(result.error(), context, "unknown_field"));
+        return std::unexpected(invalid_request_error(result.error(), context, "unknown_field"));
     }
     return {};
 }

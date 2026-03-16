@@ -200,8 +200,8 @@ TEST(ApiTest, EmptyToolInvocationsIsEmptyArray) {
 TEST(ApiTest, StreamingChunkFormat) {
     const auto chunk = zks::server::make_first_streaming_chunk(
         "chatcmpl-1", 1234567890, "local-model", "Hello", std::nullopt);
-    const auto finish = zks::server::make_streaming_chunk(
-        "chatcmpl-1", 1234567890, "local-model", std::nullopt, "stop");
+    const auto finish = zks::server::make_streaming_chunk("chatcmpl-1", 1234567890, "local-model",
+                                                          std::nullopt, "stop");
     const auto done = zks::server::make_sse_done();
 
     EXPECT_EQ(chunk.find("data: "), 0u);

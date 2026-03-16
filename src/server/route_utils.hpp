@@ -13,8 +13,7 @@ namespace zks::server {
 /// Takes a reference to ServerMetrics — the metrics object outlives all requests
 /// (owned by ServerRuntime), so a reference is safe and avoids a shared_ptr copy per request.
 inline std::function<void(const drogon::HttpResponsePtr&)>
-with_metrics(ServerMetrics& metrics,
-             std::function<void(const drogon::HttpResponsePtr&)> callback) {
+with_metrics(ServerMetrics& metrics, std::function<void(const drogon::HttpResponsePtr&)> callback) {
     return [&metrics, callback = std::move(callback)](const drogon::HttpResponsePtr& resp) {
         metrics.increment_requests();
         if (static_cast<int>(resp->getStatusCode()) >= 400) {

@@ -25,8 +25,7 @@ std::string make_first_streaming_chunk(std::string_view completion_id, std::int6
 
 /// Subsequent streaming chunk — delta only, no role field.
 std::string make_streaming_chunk(std::string_view completion_id, std::int64_t created,
-                                 std::string_view model_id,
-                                 std::optional<std::string_view> content,
+                                 std::string_view model_id, std::optional<std::string_view> content,
                                  std::optional<std::string_view> finish_reason);
 
 } // namespace zks::server

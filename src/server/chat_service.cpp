@@ -104,9 +104,9 @@ Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfi
     }
 
     auto shared_agent = std::move(shared_result->agent);
-    auto session_store = std::make_unique<SessionStore>(
-        config.model_id, config.sessions, shared_result->request_system_prompt,
-        config.zoo_config.max_history_messages);
+    auto session_store = std::make_unique<SessionStore>(config.model_id, config.sessions,
+                                                        shared_result->request_system_prompt,
+                                                        config.zoo_config.max_history_messages);
 
     return std::make_shared<ZooChatService>(config.model_id,
                                             std::move(shared_result->request_system_prompt),
@@ -156,8 +156,7 @@ ZooChatService::start_completion(const ChatCompletionRequest& request,
             invalid_request_error("Unknown model: " + request.model, "model", "invalid_model"));
     }
 
-    auto handle =
-        wrap_zoo_handle(agent_->complete(prepare_messages(request), std::move(callback)));
+    auto handle = wrap_zoo_handle(agent_->complete(prepare_messages(request), std::move(callback)));
     const auto request_id = handle.id;
     const auto created = now_seconds();
     const auto completion_id =
@@ -187,8 +186,7 @@ ZooChatService::start_session_completion(const ChatCompletionRequest& request,
     }
 
     // Use completion counter as the session request tracking ID.
-    const auto tracking_id =
-        next_completion_id_.fetch_add(1, std::memory_order_relaxed);
+    const auto tracking_id = next_completion_id_.fetch_add(1, std::memory_order_relaxed);
 
     auto begin = session_store_->begin_request(request, tracking_id);
     if (!begin) {
@@ -201,8 +199,8 @@ ZooChatService::start_session_completion(const ChatCompletionRequest& request,
     const auto completion_id = "chatcmpl-" + std::to_string(tracking_id);
     const auto session_id = *request.session_id;
 
-    auto lease = std::make_shared<CompletionLease>(
-        [store = session_store_.get(), session_id, tracking_id] {
+    auto lease =
+        std::make_shared<CompletionLease>([store = session_store_.get(), session_id, tracking_id] {
             store->release_request(session_id, tracking_id);
         });
 

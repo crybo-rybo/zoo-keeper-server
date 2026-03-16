@@ -140,20 +140,20 @@ class FakeChatService final : public zks::server::ChatService {
             std::promise<zks::server::RuntimeResult<zks::server::CompletionResult>> promise;
             auto future = promise.get_future();
 
-            streaming_future_ = std::async(std::launch::async,
-                                            [cb = std::move(callback), latch = std::move(latch),
-                                             promise = std::move(promise)]() mutable {
-                if (cb.has_value()) {
-                    (*cb)("hello ");
-                    (*cb)("world");
-                }
+            streaming_future_ =
+                std::async(std::launch::async, [cb = std::move(callback), latch = std::move(latch),
+                                                promise = std::move(promise)]() mutable {
+                    if (cb.has_value()) {
+                        (*cb)("hello ");
+                        (*cb)("world");
+                    }
 
-                latch->wait_for(std::chrono::seconds(10));
+                    latch->wait_for(std::chrono::seconds(10));
 
-                zks::server::CompletionResult response;
-                response.text = "hello world";
-                promise.set_value(std::move(response));
-            });
+                    zks::server::CompletionResult response;
+                    response.text = "hello world";
+                    promise.set_value(std::move(response));
+                });
 
             zks::server::PendingChatCompletion pending;
             pending.id = "fake-stream-1";

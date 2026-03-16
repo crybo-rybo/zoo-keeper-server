@@ -113,8 +113,8 @@ struct CompletionHandle {
 };
 
 /// Constructs a CompletionHandle from a result future.
-[[nodiscard]] CompletionHandle make_completion_handle(
-    std::uint64_t id, std::future<RuntimeResult<CompletionResult>> future);
+[[nodiscard]] CompletionHandle
+make_completion_handle(std::uint64_t id, std::future<RuntimeResult<CompletionResult>> future);
 
 // --- API error helpers ---
 

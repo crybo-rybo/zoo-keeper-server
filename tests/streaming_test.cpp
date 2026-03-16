@@ -16,7 +16,7 @@ TEST(StreamingTest, MakeSseDoneReturnsDoneFrame) {
 
 TEST(StreamingTest, ChunkContentTokenWithoutRole) {
     auto chunk = zks::server::make_streaming_chunk("chatcmpl-test", 1700000000, "test-model",
-                                                    "hello", std::nullopt);
+                                                   "hello", std::nullopt);
     auto json_str = chunk.substr(6, chunk.size() - 8);
     auto json = nlohmann::json::parse(json_str);
 
@@ -29,7 +29,7 @@ TEST(StreamingTest, ChunkContentTokenWithoutRole) {
 
 TEST(StreamingTest, ChunkFirstTokenIncludesRole) {
     auto chunk = zks::server::make_first_streaming_chunk("chatcmpl-test", 1700000000, "test-model",
-                                                          "hello", std::nullopt);
+                                                         "hello", std::nullopt);
     auto json_str = chunk.substr(6, chunk.size() - 8);
     auto json = nlohmann::json::parse(json_str);
 
@@ -40,7 +40,7 @@ TEST(StreamingTest, ChunkFirstTokenIncludesRole) {
 
 TEST(StreamingTest, ChunkRoleOnlyNoContent) {
     auto chunk = zks::server::make_first_streaming_chunk("chatcmpl-test", 1700000000, "test-model",
-                                                          std::nullopt, std::nullopt);
+                                                         std::nullopt, std::nullopt);
     auto json_str = chunk.substr(6, chunk.size() - 8);
     auto json = nlohmann::json::parse(json_str);
 
@@ -51,7 +51,7 @@ TEST(StreamingTest, ChunkRoleOnlyNoContent) {
 
 TEST(StreamingTest, ChunkFinishReason) {
     auto chunk = zks::server::make_streaming_chunk("chatcmpl-test", 1700000000, "test-model",
-                                                    std::nullopt, "stop");
+                                                   std::nullopt, "stop");
     auto json_str = chunk.substr(6, chunk.size() - 8);
     auto json = nlohmann::json::parse(json_str);
 
@@ -61,7 +61,7 @@ TEST(StreamingTest, ChunkFinishReason) {
 TEST(StreamingTest, ChunkJsonSpecialCharactersEscaped) {
     std::string content = "he said \"hello\"\nnew\\line\ttab";
     auto chunk = zks::server::make_streaming_chunk("chatcmpl-test", 1700000000, "test-model",
-                                                    content, std::nullopt);
+                                                   content, std::nullopt);
     auto json_str = chunk.substr(6, chunk.size() - 8);
     auto json = nlohmann::json::parse(json_str);
 
@@ -73,7 +73,7 @@ TEST(StreamingTest, ChunkControlCharactersEscaped) {
     content += '\x01';
     content += '\x1f';
     auto chunk = zks::server::make_streaming_chunk("chatcmpl-test", 1700000000, "test-model",
-                                                    content, std::nullopt);
+                                                   content, std::nullopt);
 
     EXPECT_NE(chunk.find("\\u0001"), std::string::npos);
     EXPECT_NE(chunk.find("\\u001f"), std::string::npos);
@@ -85,7 +85,7 @@ TEST(StreamingTest, ChunkControlCharactersEscaped) {
 
 TEST(StreamingTest, ChunkStructureMatchesOpenAiSpec) {
     auto chunk = zks::server::make_first_streaming_chunk("chatcmpl-test", 1700000000, "test-model",
-                                                          "test", std::nullopt);
+                                                         "test", std::nullopt);
     auto json_str = chunk.substr(6, chunk.size() - 8);
     auto json = nlohmann::json::parse(json_str);
 

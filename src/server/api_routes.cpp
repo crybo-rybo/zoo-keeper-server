@@ -102,7 +102,8 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(),
+                             std::move(callback))(make_error_response(*auth_err));
                 return;
             }
             with_metrics(runtime->metrics(), std::move(callback))(
@@ -121,7 +122,8 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(),
+                             std::move(callback))(make_error_response(*auth_err));
                 return;
             }
             with_metrics(runtime->metrics(),
@@ -140,7 +142,8 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(),
+                             std::move(callback))(make_error_response(*auth_err));
                 return;
             }
             auto cb = with_metrics(runtime->metrics(), std::move(callback));
@@ -172,7 +175,8 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(),
+                             std::move(callback))(make_error_response(*auth_err));
                 return;
             }
             auto cb = with_metrics(runtime->metrics(), std::move(callback));
@@ -198,7 +202,8 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(),
+                             std::move(callback))(make_error_response(*auth_err));
                 return;
             }
             auto cb = with_metrics(runtime->metrics(), std::move(callback));
@@ -225,7 +230,8 @@ void register_api_routes(drogon::HttpAppFramework& app,
                 return;
             }
             if (auto auth_err = check_auth(request, runtime->config()); auth_err.has_value()) {
-                with_metrics(runtime->metrics(), std::move(callback))(make_error_response(*auth_err));
+                with_metrics(runtime->metrics(),
+                             std::move(callback))(make_error_response(*auth_err));
                 return;
             }
             with_metrics(runtime->metrics(), std::move(callback))(

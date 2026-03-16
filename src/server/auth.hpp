@@ -33,21 +33,19 @@ namespace zks::server {
 
     // Check that the header starts with "Bearer "
     if (auth_header.size() < key_start_offset ||
-        auth_header.compare(0, kBearerPrefix.size(), kBearerPrefix.data(),
-                            kBearerPrefix.size()) != 0) {
+        auth_header.compare(0, kBearerPrefix.size(), kBearerPrefix.data(), kBearerPrefix.size()) !=
+            0) {
         diff = 1;
     }
 
     // Length mismatch flag — folded into diff after the loop
-    const unsigned char length_mismatch =
-        (auth_header.size() != expected_total) ? 1 : 0;
+    const unsigned char length_mismatch = (auth_header.size() != expected_total) ? 1 : 0;
 
     // Constant-time comparison of the key portion
     for (std::size_t i = 0; i < compare_len; ++i) {
-        const unsigned char a =
-            (key_start_offset + i < auth_header.size())
-                ? static_cast<unsigned char>(auth_header[key_start_offset + i])
-                : 0xFF;
+        const unsigned char a = (key_start_offset + i < auth_header.size())
+                                    ? static_cast<unsigned char>(auth_header[key_start_offset + i])
+                                    : 0xFF;
         const unsigned char b =
             (i < expected.size()) ? static_cast<unsigned char>(expected[i]) : 0xFF;
         diff |= a ^ b;
