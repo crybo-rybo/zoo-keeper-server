@@ -7,19 +7,10 @@ endif()
 
 project(zoo-keeper-server VERSION 0.0.4 LANGUAGES CXX)
 
-configure_file(src/server/version.hpp.in
-               ${CMAKE_CURRENT_BINARY_DIR}/src/server/version.hpp @ONLY)
-
-include(CTest)
-include(FetchContent)
-
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(ZKS_SUBMODULE_HINT "Run: git submodule update --init --recursive")
-set(ZKS_ZOO_KEEPER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/zoo-keeper")
-set(ZKS_LLAMA_DIR "${ZKS_ZOO_KEEPER_DIR}/extern/llama.cpp")
 set(ZKS_DROGON_VERSION "v1.9.12" CACHE STRING
     "Pinned Drogon version for the embedded HTTP server build")
 option(ZKS_ENABLE_TEST_UI "Enable the test-only browser UI at /_test" OFF)
@@ -28,233 +19,21 @@ set(ZKS_LIVE_SMOKE_MODEL "" CACHE FILEPATH
 set(ZKS_LIVE_SMOKE_PROMPT "Reply with the single word: zoo." CACHE STRING
     "Prompt used by the optional live smoke test")
 
-if(NOT EXISTS "${ZKS_ZOO_KEEPER_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR
-        "Missing zoo-keeper submodule at extern/zoo-keeper. ${ZKS_SUBMODULE_HINT}"
-    )
-endif()
+include(CTest)
+include(FetchContent)
+include(GNUInstallDirs)
 
-if(NOT EXISTS "${ZKS_LLAMA_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR
-        "Missing nested llama.cpp submodule under extern/zoo-keeper. ${ZKS_SUBMODULE_HINT}"
-    )
-endif()
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-set(ZOO_BUILD_TESTS OFF CACHE BOOL "Disable upstream zoo-keeper tests in this repo" FORCE)
-set(ZOO_BUILD_INTEGRATION_TESTS OFF CACHE BOOL
-    "Disable upstream zoo-keeper integration tests in this repo" FORCE)
-set(ZOO_BUILD_EXAMPLES OFF CACHE BOOL "Disable upstream zoo-keeper examples in this repo" FORCE)
-set(ZOO_BUILD_DOCS OFF CACHE BOOL "Disable upstream zoo-keeper docs in this repo" FORCE)
-set(ZOO_ENABLE_COVERAGE OFF CACHE BOOL "Disable upstream zoo-keeper coverage in this repo" FORCE)
-set(ZOO_ENABLE_SANITIZERS OFF CACHE BOOL
-    "Disable upstream zoo-keeper sanitizers in this repo" FORCE)
-set(ZOO_ENABLE_LOGGING OFF CACHE BOOL "Disable upstream zoo-keeper logging in this repo" FORCE)
-
-if(NOT DEFINED ZOO_ENABLE_METAL)
-    if(APPLE)
-        set(ZOO_ENABLE_METAL ON CACHE BOOL
-            "Enable Metal acceleration for zoo-keeper on Apple hosts" FORCE)
-    else()
-        set(ZOO_ENABLE_METAL OFF CACHE BOOL
-            "Enable Metal acceleration for zoo-keeper on Apple hosts" FORCE)
-    endif()
-endif()
-
-if(NOT DEFINED ZOO_ENABLE_CUDA)
-    set(ZOO_ENABLE_CUDA OFF CACHE BOOL "Enable CUDA acceleration for zoo-keeper" FORCE)
-endif()
-
-set(BUILD_CTL OFF CACHE BOOL "Disable Drogon CLI tooling in this repo" FORCE)
-set(BUILD_EXAMPLES OFF CACHE BOOL "Disable Drogon examples in this repo" FORCE)
-set(BUILD_ORM OFF CACHE BOOL "Disable Drogon ORM in this repo" FORCE)
-set(BUILD_DOC OFF CACHE BOOL "Disable Drogon docs in this repo" FORCE)
-set(BUILD_BROTLI OFF CACHE BOOL "Disable Brotli support in this repo" FORCE)
-set(BUILD_YAML_CONFIG OFF CACHE BOOL "Disable YAML config support in this repo" FORCE)
-set(ZKS_BUILD_TESTING ${BUILD_TESTING})
-set(BUILD_TESTING OFF CACHE BOOL "Disable subproject tests in this repo" FORCE)
-FetchContent_Declare(
-    drogon
-    GIT_REPOSITORY https://github.com/drogonframework/drogon.git
-    GIT_TAG ${ZKS_DROGON_VERSION}
-    GIT_SHALLOW TRUE
-    GIT_SUBMODULES_RECURSE TRUE
-)
-FetchContent_MakeAvailable(drogon)
-set(BUILD_TESTING ${ZKS_BUILD_TESTING} CACHE BOOL "Enable top-level tests" FORCE)
-if(TARGET drogon AND NOT TARGET Drogon::Drogon)
-    add_library(Drogon::Drogon ALIAS drogon)
-endif()
+include(Dependencies)
 
 add_subdirectory(extern/zoo-keeper)
-
-add_library(zks_server_core
-    src/server/api_types.cpp
-    src/server/api_json.cpp
-    src/server/api_routes.cpp
-    src/server/chat_service.cpp
-    src/server/completion_controller.cpp
-    src/server/command_tools.cpp
-    src/server/config.cpp
-    src/server/executor.cpp
-    src/server/http_server.cpp
-    src/server/metrics.cpp
-    src/server/runtime.cpp
-    src/server/session_manager.cpp
-    src/server/streaming.cpp
-    src/server/health.cpp
-    src/server/zoo_adapter.cpp
-)
-if(ZKS_ENABLE_TEST_UI)
-    find_program(ZKS_XXD xxd REQUIRED)
-    set(ZKS_TEST_UI_HTML ${CMAKE_CURRENT_SOURCE_DIR}/src/server/test_ui.html)
-    set(ZKS_TEST_UI_JS ${CMAKE_CURRENT_SOURCE_DIR}/src/server/test_ui.js)
-    set(ZKS_TEST_UI_HTML_CPP ${CMAKE_CURRENT_BINARY_DIR}/test_ui_html_content.cpp)
-    set(ZKS_TEST_UI_JS_CPP ${CMAKE_CURRENT_BINARY_DIR}/test_ui_js_content.cpp)
-
-    add_custom_command(
-        OUTPUT ${ZKS_TEST_UI_HTML_CPP}
-        COMMAND ${ZKS_XXD} -n kTestUiHtmlData -i ${ZKS_TEST_UI_HTML} > ${ZKS_TEST_UI_HTML_CPP}
-        DEPENDS ${ZKS_TEST_UI_HTML}
-        COMMENT "Embedding test_ui.html"
-    )
-    add_custom_command(
-        OUTPUT ${ZKS_TEST_UI_JS_CPP}
-        COMMAND ${ZKS_XXD} -n kTestUiJsData -i ${ZKS_TEST_UI_JS} > ${ZKS_TEST_UI_JS_CPP}
-        DEPENDS ${ZKS_TEST_UI_JS}
-        COMMENT "Embedding test_ui.js"
-    )
-
-    target_sources(zks_server_core PRIVATE
-        src/server/test_ui.cpp
-        ${ZKS_TEST_UI_HTML_CPP}
-        ${ZKS_TEST_UI_JS_CPP}
-    )
-    target_compile_definitions(zks_server_core PUBLIC ZKS_ENABLE_TEST_UI=1)
-endif()
-target_compile_features(zks_server_core PUBLIC cxx_std_23)
-target_include_directories(zks_server_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_BINARY_DIR}/src
-)
-target_link_libraries(zks_server_core
-    PUBLIC
-        Drogon::Drogon
-        ZooKeeper::zoo
-)
-
-add_executable(zoo_keeper_server
-    src/main.cpp
-)
-target_compile_features(zoo_keeper_server PRIVATE cxx_std_23)
-target_link_libraries(zoo_keeper_server PRIVATE zks_server_core)
-
-add_executable(zoo_keeper_link_smoke
-    src/link_smoke.cpp
-)
-target_compile_features(zoo_keeper_link_smoke PRIVATE cxx_std_23)
-target_link_libraries(zoo_keeper_link_smoke PRIVATE ZooKeeper::zoo)
-
-add_executable(zoo_keeper_live_smoke
-    src/live_smoke.cpp
-)
-target_compile_features(zoo_keeper_live_smoke PRIVATE cxx_std_23)
-target_link_libraries(zoo_keeper_live_smoke PRIVATE ZooKeeper::zoo)
+add_subdirectory(src)
 
 if(BUILD_TESTING)
-    # --- GoogleTest (fetched only when BUILD_TESTING=ON) ---
-    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(
-        googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG v1.15.2
-        GIT_SHALLOW TRUE
-    )
-    FetchContent_MakeAvailable(googletest)
-
-    # --- test helper ---
-    function(zks_add_test TEST_NAME)
-        cmake_parse_arguments(ARG "OWN_MAIN" "" "SOURCES;LIBS" ${ARGN})
-        add_executable(zks_${TEST_NAME} ${ARG_SOURCES})
-        target_compile_features(zks_${TEST_NAME} PRIVATE cxx_std_23)
-        if(ARG_OWN_MAIN)
-            target_link_libraries(zks_${TEST_NAME} PRIVATE
-                zks_server_core GTest::gtest ${ARG_LIBS})
-        else()
-            target_link_libraries(zks_${TEST_NAME} PRIVATE
-                zks_server_core GTest::gtest_main ${ARG_LIBS})
-        endif()
-        add_test(NAME ${TEST_NAME} COMMAND zks_${TEST_NAME})
-    endfunction()
-
-    # --- Unit tests ---
-    zks_add_test(config_parse_test SOURCES tests/config_test.cpp)
-    zks_add_test(health_response_test SOURCES tests/health_test.cpp)
-    zks_add_test(api_response_test SOURCES tests/api_test.cpp)
-    zks_add_test(runtime_stop_test SOURCES tests/runtime_test.cpp)
-    zks_add_test(session_manager_test SOURCES tests/session_manager_test.cpp)
-    zks_add_test(auth_test SOURCES tests/auth_test.cpp)
-    zks_add_test(metrics_test SOURCES tests/metrics_test.cpp)
-    zks_add_test(http_integration_test SOURCES tests/http_integration_test.cpp)
-    set_tests_properties(http_integration_test PROPERTIES TIMEOUT 30)
-    zks_add_test(streaming_test SOURCES tests/streaming_test.cpp)
-    zks_add_test(executor_test SOURCES tests/executor_test.cpp)
-    zks_add_test(zoo_adapter_test SOURCES tests/zoo_adapter_test.cpp)
-
-    # tool_test_helper is a subprocess, not a test itself
-    add_executable(zks_tool_test_helper tests/tool_test_helper.cpp)
-    target_compile_features(zks_tool_test_helper PRIVATE cxx_std_23)
-    target_link_libraries(zks_tool_test_helper PRIVATE zks_server_core)
-
-    # command_tools_test has its own main (OWN_MAIN) and passes helper path via argv
-    add_executable(zks_command_tools_test tests/command_tools_test.cpp)
-    target_compile_features(zks_command_tools_test PRIVATE cxx_std_23)
-    target_link_libraries(zks_command_tools_test PRIVATE zks_server_core GTest::gtest)
-    add_test(
-        NAME command_tools_test
-        COMMAND zks_command_tools_test $<TARGET_FILE:zks_tool_test_helper>
-    )
-
-    if(ZKS_ENABLE_TEST_UI)
-        zks_add_test(test_ui_response_test SOURCES tests/test_ui_test.cpp)
-    endif()
-
-    # --- Non-GTest tests ---
-    add_test(NAME baseline_link_smoke COMMAND zoo_keeper_link_smoke)
-    set_tests_properties(baseline_link_smoke PROPERTIES
-        PASS_REGULAR_EXPRESSION "Observed expected InvalidModelPath validation failure."
-    )
-
-    add_test(
-        NAME server_startup_missing_model
-        COMMAND ${CMAKE_COMMAND}
-            -DTEST_EXECUTABLE=$<TARGET_FILE:zoo_keeper_server>
-            -DTEST_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/server.invalid.missing_model.json
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/server_startup_missing_model.cmake
-    )
-
-    if(ZKS_LIVE_SMOKE_MODEL)
-        if(NOT EXISTS "${ZKS_LIVE_SMOKE_MODEL}")
-            message(FATAL_ERROR
-                "ZKS_LIVE_SMOKE_MODEL does not exist: ${ZKS_LIVE_SMOKE_MODEL}"
-            )
-        endif()
-
-        add_test(
-            NAME live_model_smoke
-            COMMAND zoo_keeper_live_smoke
-                "${ZKS_LIVE_SMOKE_MODEL}"
-                "${ZKS_LIVE_SMOKE_PROMPT}"
-        )
-        set_tests_properties(live_model_smoke PROPERTIES
-            PASS_REGULAR_EXPRESSION "Live smoke succeeded."
-            TIMEOUT 300
-        )
-    endif()
+    add_subdirectory(tests)
 endif()
 
-include(GNUInstallDirs)
-install(TARGETS zoo_keeper_server
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY config/
     DESTINATION ${CMAKE_INSTALL_DATADIR}/zoo-keeper-server/config
     FILES_MATCHING PATTERN "*.json")
