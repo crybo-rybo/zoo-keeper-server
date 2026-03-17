@@ -205,11 +205,10 @@ ZooChatService::start_session_completion(const ChatCompletionRequest& request,
 
     track_session_request(session_id, zoo_request_id);
 
-    auto lease = std::make_shared<CompletionLease>(
-        [this, session_id, tracking_id] {
-            untrack_session_request(session_id);
-            session_store_->release_request(session_id, tracking_id);
-        });
+    auto lease = std::make_shared<CompletionLease>([this, session_id, tracking_id] {
+        untrack_session_request(session_id);
+        session_store_->release_request(session_id, tracking_id);
+    });
 
     return PendingChatCompletion{
         completion_id,
@@ -301,7 +300,7 @@ ZooChatService::prepare_messages(const ChatCompletionRequest& request) const {
 }
 
 void ZooChatService::track_session_request(const std::string& session_id,
-                                            std::uint64_t zoo_request_id) {
+                                           std::uint64_t zoo_request_id) {
     std::lock_guard<std::mutex> lock(active_requests_mutex_);
     active_session_requests_[session_id] = zoo_request_id;
 }
