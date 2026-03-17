@@ -1,28 +1,27 @@
 #include "server/api_json.hpp"
 
+#include "server/internal_utils.hpp"
+
 #include <algorithm>
 #include <array>
 #include <string>
+
+#include <zoo/core/types.hpp>
 
 namespace zks::server {
 namespace {
 
 template <size_t N>
-ApiResult<void> reject_unknown_keys(const nlohmann::json& json, const char* context,
-                                    const std::array<const char*, N>& allowed_keys) {
-    if (!json.is_object()) {
-        return std::unexpected(
-            invalid_request_error(std::string(context) + " must be a JSON object"));
+ApiResult<void> reject_api_unknown_keys(const nlohmann::json& json, const char* context,
+                                        const std::array<const char*, N>& allowed_keys) {
+    std::array<std::string_view, N> sv_keys;
+    for (size_t i = 0; i < N; ++i) {
+        sv_keys[i] = allowed_keys[i];
     }
-
-    for (auto it = json.begin(); it != json.end(); ++it) {
-        if (std::find(allowed_keys.begin(), allowed_keys.end(), it.key()) == allowed_keys.end()) {
-            return std::unexpected(
-                invalid_request_error("Unknown " + std::string(context) + " field: " + it.key(),
-                                      context, "unknown_field"));
-        }
+    auto result = reject_unknown_keys(json, context, std::span<const std::string_view>(sv_keys));
+    if (!result) {
+        return std::unexpected(invalid_request_error(result.error(), context, "unknown_field"));
     }
-
     return {};
 }
 
@@ -47,7 +46,7 @@ ApiResult<MessageRole> parse_role(std::string_view role) {
 ApiResult<ChatMessage> parse_message(const nlohmann::json& json, std::vector<ChatMessage>& seed) {
     static constexpr std::array<const char*, 3> kAllowedMessageKeys = {"role", "content",
                                                                        "tool_call_id"};
-    if (auto unknown_keys = reject_unknown_keys(json, "message", kAllowedMessageKeys);
+    if (auto unknown_keys = reject_api_unknown_keys(json, "message", kAllowedMessageKeys);
         !unknown_keys) {
         return std::unexpected(unknown_keys.error());
     }
@@ -103,7 +102,7 @@ nlohmann::json make_tool_schema(const ToolDefinition& metadata) {
 }
 
 nlohmann::json make_tool_invocation_json(const ToolInvocationRecord& inv) {
-    nlohmann::json j{{"id", inv.id}, {"name", inv.name}, {"status", to_string(inv.status)}};
+    nlohmann::json j{{"id", inv.id}, {"name", inv.name}, {"status", zoo::to_string(inv.status)}};
     try {
         j["arguments"] = nlohmann::json::parse(inv.arguments_json);
     } catch (...) {
@@ -172,7 +171,7 @@ ApiResult<ChatCompletionRequest> parse_chat_completion_request(std::string_view 
 
     static constexpr std::array<const char*, 4> kAllowedKeys = {"model", "messages", "stream",
                                                                 "session_id"};
-    if (auto unknown_keys = reject_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
+    if (auto unknown_keys = reject_api_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
         return std::unexpected(unknown_keys.error());
     }
 
@@ -234,7 +233,7 @@ ApiResult<SessionCreateRequest> parse_session_create_request(std::string_view bo
     }
 
     static constexpr std::array<const char*, 2> kAllowedKeys = {"model", "system_prompt"};
-    if (auto unknown_keys = reject_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
+    if (auto unknown_keys = reject_api_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
         return std::unexpected(unknown_keys.error());
     }
 
@@ -352,7 +351,7 @@ ApiError map_runtime_error_to_api_error(const RuntimeError& error) {
     case RuntimeErrorCode::ToolRetriesExhausted:
     case RuntimeErrorCode::ToolLoopLimitReached:
         return server_error(error.message, "tool_retries_exhausted");
-    case RuntimeErrorCode::RuntimeFailure:
+    case RuntimeErrorCode::Unknown:
         break;
     }
     return server_error(error.message, "runtime_error");

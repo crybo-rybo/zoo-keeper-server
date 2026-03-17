@@ -47,23 +47,11 @@ void append_json_escaped(std::string& out, std::string_view sv) {
     }
 }
 
-} // namespace
-
-std::string make_sse_data(const nlohmann::json& payload) {
-    return "data: " + payload.dump() + "\n\n";
-}
-
-std::string make_sse_done() {
-    return "data: [DONE]\n\n";
-}
-
-std::string make_chat_completion_chunk(std::string_view completion_id, std::int64_t created,
-                                       std::string_view model_id,
-                                       std::optional<std::string_view> content, bool include_role,
-                                       std::optional<std::string_view> finish_reason) {
+std::string make_chunk_impl(std::string_view completion_id, std::int64_t created,
+                            std::string_view model_id, std::optional<std::string_view> content,
+                            bool include_role, std::optional<std::string_view> finish_reason) {
     // Build the SSE frame directly as a string to avoid nlohmann::json overhead.
     // This is the hottest allocation path during streaming -- called once per token.
-    // The JSON structure is fixed and predictable, so manual construction is safe.
     std::string result;
     result.reserve(256); // typical chunk is ~150-200 bytes
 
@@ -101,6 +89,29 @@ std::string make_chat_completion_chunk(std::string_view completion_id, std::int6
     result += "\n\n";
 
     return result;
+}
+
+} // namespace
+
+std::string make_sse_data(const nlohmann::json& payload) {
+    return "data: " + payload.dump() + "\n\n";
+}
+
+std::string make_sse_done() {
+    return "data: [DONE]\n\n";
+}
+
+std::string make_first_streaming_chunk(std::string_view completion_id, std::int64_t created,
+                                       std::string_view model_id,
+                                       std::optional<std::string_view> content,
+                                       std::optional<std::string_view> finish_reason) {
+    return make_chunk_impl(completion_id, created, model_id, content, true, finish_reason);
+}
+
+std::string make_streaming_chunk(std::string_view completion_id, std::int64_t created,
+                                 std::string_view model_id, std::optional<std::string_view> content,
+                                 std::optional<std::string_view> finish_reason) {
+    return make_chunk_impl(completion_id, created, model_id, content, false, finish_reason);
 }
 
 } // namespace zks::server

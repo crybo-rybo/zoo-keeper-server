@@ -2,69 +2,64 @@
 
 #include "server/api_types.hpp"
 #include "server/config.hpp"
+#include "server/internal_utils.hpp"
 #include "server/result.hpp"
 
 #include <atomic>
 #include <cstddef>
-#include <functional>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
-
-// Transparent hash and equality for std::unordered_map<std::string, ...> that
-// allows lookup by std::string_view without allocating a temporary std::string.
-struct TransparentStringHash {
-    using is_transparent = void;
-    size_t operator()(std::string_view sv) const noexcept {
-        return std::hash<std::string_view>{}(sv);
-    }
-};
-
-struct TransparentStringEqual {
-    using is_transparent = void;
-    bool operator()(std::string_view a, std::string_view b) const noexcept {
-        return a == b;
-    }
-};
+#include <vector>
 
 namespace zks::server {
 
-/// Manages per-session conversation history with TTL-based expiration.
+/// Result of SessionStore::begin_request() — the validated, history-enriched message
+/// list ready to be sent to the agent.
+struct BeginRequestResult {
+    std::vector<ChatMessage> messages;
+    std::int64_t started_at = 0;
+    ChatMessage user_message; // the single user message from the request
+};
+
+/// Pure state store for per-session conversation history with TTL-based expiration.
+///
+/// No knowledge of `CompletionHandle`, `zoo::Agent`, or `TokenCallback` —
+/// completion orchestration lives in `ZooChatService`.
 ///
 /// When `max_sessions = 0` all session operations return an error immediately.
 /// Thread-safe; all public methods acquire the internal mutex.
-///
-/// `reap_expired_sessions()` is called periodically by the background reaper
-/// thread in `ServerRuntime`.
-class SessionManager {
+class SessionStore {
   public:
-    /// Callback that starts a completion and returns a handle to the async result.
-    using CompletionStarter =
-        std::function<CompletionHandle(std::vector<ChatMessage>, std::optional<TokenCallback>)>;
-
-    /// Callback to cancel an in-flight request by its completion ID.
-    using RequestCanceler = std::function<void(std::uint64_t)>;
-
-    SessionManager(std::string model_id, SessionConfig config, std::string base_system_prompt,
-                   size_t max_history_messages, CompletionStarter completion_starter,
-                   RequestCanceler request_canceler);
+    SessionStore(std::string model_id, SessionConfig config, std::string base_system_prompt,
+                 size_t max_history_messages, Clock clock = now_seconds);
 
     [[nodiscard]] SessionHealth health() const noexcept;
 
-    /// Removes all sessions whose TTL has elapsed. Called by the background reaper thread.
+    /// Removes all sessions whose TTL has elapsed.
     void reap_expired_sessions();
 
     ApiResult<SessionSummary> create_session(const SessionCreateRequest& request);
     ApiResult<SessionSummary> get_session(std::string_view session_id);
     ApiResult<void> delete_session(std::string_view session_id);
 
-    ApiResult<PendingChatCompletion>
-    start_completion(const ChatCompletionRequest& request,
-                     std::atomic<std::uint64_t>& next_completion_id,
-                     std::optional<std::function<void(std::string_view)>> callback = std::nullopt);
+    /// Validates the request, builds the full message list (history + new user message),
+    /// and marks the session as having an active request.
+    ApiResult<BeginRequestResult> begin_request(const ChatCompletionRequest& request,
+                                                std::uint64_t request_id);
+
+    /// Appends the user message and assistant response to history (on success),
+    /// then clears the active request. Ignored if session was closed or request_id doesn't match.
+    void commit_result(std::string_view session_id, std::uint64_t request_id,
+                       const ChatMessage& user_message,
+                       const RuntimeResult<CompletionResult>& result);
+
+    /// Clears the active request without modifying history. Used by CompletionLease cleanup.
+    void release_request(std::string_view session_id, std::uint64_t request_id);
 
     void stop();
 
@@ -94,17 +89,13 @@ class SessionManager {
 
     void reap_expired_sessions_locked(std::int64_t now,
                                       std::vector<std::shared_ptr<SessionState>>& expired);
-    void finish_request(const std::shared_ptr<SessionState>& session, std::uint64_t request_id);
-    void finish_request(const std::shared_ptr<SessionState>& session, std::uint64_t request_id,
-                        const ChatMessage& user_message,
-                        const RuntimeResult<CompletionResult>& result);
+    void touch_session(SessionState& session);
 
     std::string model_id_;
     SessionConfig config_;
     std::string base_system_prompt_;
     size_t max_history_messages_ = 0;
-    CompletionStarter completion_starter_;
-    RequestCanceler request_canceler_;
+    Clock clock_;
     std::atomic<std::uint64_t> next_session_id_{1};
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<SessionState>, TransparentStringHash,

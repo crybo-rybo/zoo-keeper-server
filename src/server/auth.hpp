@@ -20,22 +20,39 @@ namespace zks::server {
     }
 
     const auto& auth_header = request->getHeader("Authorization");
-    // Avoid allocating "Bearer " + key on every request. Instead, check prefix
-    // and compare the suffix against the configured key in-place.
     constexpr std::string_view kBearerPrefix = "Bearer ";
-    if (auth_header.size() != kBearerPrefix.size() + config.api_key->size() ||
+    const auto& expected = *config.api_key;
+
+    // Always perform the constant-time comparison loop regardless of whether
+    // the header length matches, to avoid leaking key length via timing.
+    const size_t key_start_offset = kBearerPrefix.size();
+    const size_t expected_total = key_start_offset + expected.size();
+    const size_t compare_len = std::max(expected.size(), std::size_t{1});
+
+    volatile unsigned char diff = 0;
+
+    // Check that the header starts with "Bearer "
+    if (auth_header.size() < key_start_offset ||
         auth_header.compare(0, kBearerPrefix.size(), kBearerPrefix.data(), kBearerPrefix.size()) !=
             0) {
-        return auth_error("Invalid API key", "invalid_api_key");
+        diff = 1;
     }
 
-    // Constant-time comparison of the key portion to prevent timing side-channel attacks.
-    const auto* key_start = auth_header.data() + kBearerPrefix.size();
-    const auto& expected = *config.api_key;
-    volatile unsigned char diff = 0;
-    for (std::size_t i = 0; i < expected.size(); ++i) {
-        diff |= static_cast<unsigned char>(key_start[i]) ^ static_cast<unsigned char>(expected[i]);
+    // Length mismatch flag — folded into diff after the loop
+    const unsigned char length_mismatch = (auth_header.size() != expected_total) ? 1 : 0;
+
+    // Constant-time comparison of the key portion
+    for (std::size_t i = 0; i < compare_len; ++i) {
+        const unsigned char a = (key_start_offset + i < auth_header.size())
+                                    ? static_cast<unsigned char>(auth_header[key_start_offset + i])
+                                    : 0xFF;
+        const unsigned char b =
+            (i < expected.size()) ? static_cast<unsigned char>(expected[i]) : 0xFF;
+        diff |= a ^ b;
     }
+
+    diff |= length_mismatch;
+
     if (diff != 0) {
         return auth_error("Invalid API key", "invalid_api_key");
     }

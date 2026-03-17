@@ -6,6 +6,25 @@
 
 ---
 
+## Items Resolved in `refactor/architectural-refinement` (2026-03-15)
+
+The following findings from this roadmap were fully or partially addressed by PR #12:
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| 1 | API key comparison not constant-time | **Resolved.** `auth.hpp` now performs constant-time comparison regardless of length mismatch. |
+| 3 | Dangling raw pointer in SessionManager lambdas | **Resolved.** `SessionStore` no longer holds any callbacks or agent references. `CompletionStarter` and `RequestCanceler` deleted. Completion orchestration moved to `ZooChatService` which captures `agent_` as `shared_ptr`. |
+| P1 #4 | Code duplication (`with_metrics`, `combine_system_prompts`, `now_seconds`, `reject_unknown_keys`) | **Resolved.** All four consolidated into `internal_utils.hpp` / `route_utils.hpp`. |
+| P1 #8 | Per-token JSON allocation in SSE streaming | **Resolved.** `make_chat_completion_chunk` (already using direct string building) replaced by named `make_first_streaming_chunk()` / `make_streaming_chunk()`. |
+| P2 #12 | `zoo_adapter` layer untested | **Resolved differently.** Adapter layer eliminated — server types are now `using` aliases to zoo types. Only `from_zoo_response()` and `from_zoo_tool_metadata()` remain (for int→int64_t promotion). |
+| P3 #21 | `CompletionHandle::get()` const-correctness | **Resolved.** `CompletionSource` virtual class deleted. `CompletionHandle::get()` is non-const on the concrete implementation. |
+| P3 #22 | No Doxygen on `SessionManager`, `CompletionSource` | **Partially resolved.** `CompletionSource` deleted. `SessionStore` has class-level Doxygen. Remaining headers still need documentation (tracked as open item). |
+| P3 #29 | Detached thread in `FakeChatService` | **Resolved.** Uses `std::async` instead of raw `std::thread`. |
+
+**Terminology change:** `SessionManager` has been renamed to `SessionStore` throughout the codebase. A deprecated `using SessionManager = SessionStore;` alias exists for transition.
+
+---
+
 ## Executive Summary
 
 Zoo-keeper-server is a well-structured, focused C++23 HTTP server wrapping llama.cpp for local LLM inference. The architecture is clean — single shared agent, clear separation between HTTP routing, service orchestration, session management, and adapter layers. Error handling with `std::expected` is used consistently. The codebase is relatively small (~3,500 lines of project code) and coherent.
@@ -163,7 +182,8 @@ That said, a principal-engineer-level review reveals issues across security, cod
 ### 22. No Doxygen Comments on Public Headers
 **Files:** All `src/server/*.hpp`
 **Issue:** Only `auth.hpp` has a single `///` comment. No public class or function has documentation. `ChatService` is a key interface with 7 pure virtual methods and zero documentation on expected behavior, thread safety guarantees, or ownership semantics.
-**Fix:** Add `///` documentation to at least: `ChatService`, `ServerRuntime`, `SessionManager`, `BoundedExecutor`, `CompletionSource`, and all public factory functions.
+**Fix:** Add `///` documentation to at least: `ChatService`, `ServerRuntime`, `SessionStore`, `BoundedExecutor`, `CompletionHandle`, and all public factory functions.
+*Note: `CompletionSource` was deleted and `SessionManager` renamed to `SessionStore` in the architectural refinement (PR #12).*
 
 ### 22. No OpenAPI / Swagger Specification
 **Issue:** The API is documented only in `README.md` prose and `docs/error-reference.md`. There's no machine-readable API spec. This makes client SDK generation, contract testing, and API documentation hosting impossible.

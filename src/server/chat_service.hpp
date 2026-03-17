@@ -9,10 +9,12 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace zoo {
@@ -33,7 +35,7 @@ struct ToolProvider {
 /// Abstract interface for the chat completion service.
 ///
 /// All methods are safe to call from Drogon I/O threads.
-/// One shared agent backs all requests; sessions are managed externally via SessionManager.
+/// One shared agent backs all requests; sessions are managed via SessionStore.
 class ChatService {
   public:
     virtual ~ChatService() = default;
@@ -60,8 +62,8 @@ class ChatService {
 
 /// Concrete ChatService backed by a single shared `zoo::Agent`.
 ///
-/// `create()` validates config and loads the model synchronously; it blocks until
-/// the model is in memory. All public methods are thread-safe.
+/// Owns both the agent and the session store. Handles completion orchestration
+/// for both session and non-session paths directly.
 class ZooChatService final : public ChatService {
   public:
     static Result<std::shared_ptr<ZooChatService>> create(const ServerConfig& config);
@@ -71,7 +73,7 @@ class ZooChatService final : public ChatService {
     ZooChatService(std::string model_id, std::string request_system_prompt,
                    std::vector<ToolDefinition> tool_metadata,
                    std::shared_ptr<zoo::Agent> shared_agent,
-                   std::unique_ptr<SessionManager> session_manager);
+                   std::unique_ptr<SessionStore> session_store);
     ~ZooChatService() override;
 
     [[nodiscard]] bool is_ready() const noexcept override;
@@ -95,12 +97,24 @@ class ZooChatService final : public ChatService {
     [[nodiscard]] std::vector<ChatMessage>
     prepare_messages(const ChatCompletionRequest& request) const;
 
+    ApiResult<PendingChatCompletion>
+    start_session_completion(const ChatCompletionRequest& request,
+                             std::optional<TokenCallback> callback);
+
+    void track_session_request(const std::string& session_id, std::uint64_t zoo_request_id);
+    void untrack_session_request(const std::string& session_id);
+
     std::string model_id_;
     std::string request_system_prompt_;
     std::vector<ToolDefinition> tool_metadata_;
     std::shared_ptr<zoo::Agent> agent_;
-    std::unique_ptr<SessionManager> session_manager_;
+    std::unique_ptr<SessionStore> session_store_;
     std::atomic<std::uint64_t> next_completion_id_{1};
+
+    /// Maps session_id → zoo::RequestId for active session requests.
+    /// Used by delete_session to cancel in-flight inference.
+    std::mutex active_requests_mutex_;
+    std::unordered_map<std::string, std::uint64_t> active_session_requests_;
 };
 
 } // namespace zks::server
