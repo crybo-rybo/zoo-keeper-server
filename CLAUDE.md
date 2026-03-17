@@ -2,39 +2,22 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Build
+## Build & Test
 
 ```bash
-# Initialize submodules (required first time)
-git submodule update --init --recursive
-
-# Configure and build
-cmake -S . -B build
-cmake --build build --parallel
-
-# Build with tests
-cmake -S . -B build -DBUILD_TESTING=ON
-cmake --build build --parallel
-
-# Build with optional test UI (served at /_test)
-cmake -S . -B build-test-ui -DZKS_ENABLE_TEST_UI=ON
-cmake --build build-test-ui --parallel
+scripts/build              # Configure + build (auto-inits submodules)
+scripts/build --test-ui    # Build with browser test UI at /_test
+scripts/build --sanitize   # Build with ASan/UBSan
+scripts/test               # Build + run all tests
+scripts/test -R config     # Build + run tests matching pattern
+scripts/format             # Format all source files
+scripts/format-check       # Check formatting (exits non-zero on violations)
 ```
 
 ## Run
 
 ```bash
 ./build/zoo_keeper_server config/server.example.json
-```
-
-## Tests
-
-```bash
-# Run all tests
-ctest --test-dir build --output-on-failure
-
-# Run a single test by name (use -R for regex match)
-ctest --test-dir build --output-on-failure -R config_test
 ```
 
 ## CMake Options
@@ -133,3 +116,13 @@ Chat completions accept `session_id` to associate requests with a session for hi
 ## Code Style
 
 C++23. Follow the `.clang-format` in the project root: 4-space indent, 100-column limit, snake_case for functions/files, PascalCase for types.
+
+## Context Pointers
+
+| What | Where |
+|------|-------|
+| Path-scoped agent rules | `.claude/rules/` |
+| Reusable agent commands | `.claude/commands/` |
+| Architecture decisions | `docs/adr/` |
+| OpenAPI specification | `docs/openapi.yaml` |
+| Error type/code catalog | `docs/error-reference.md` |

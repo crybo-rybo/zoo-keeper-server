@@ -1,0 +1,32 @@
+#!/bin/sh
+set -e
+
+# --- Find clang-format (prefer version 22) ---
+if command -v clang-format-22 >/dev/null 2>&1; then
+    FORMATTER="clang-format-22"
+elif command -v clang-format >/dev/null 2>&1; then
+    FORMATTER="clang-format"
+else
+    echo "Error: clang-format not found on PATH" >&2
+    exit 1
+fi
+
+echo "Using: $FORMATTER ($($FORMATTER --version))"
+
+# --- Check formatting (collect files first, then check) ---
+FILES=$(find src tests -type f \( -name '*.cpp' -o -name '*.hpp' \))
+FAILED=0
+
+for file in $FILES; do
+    if ! "$FORMATTER" --dry-run --Werror "$file" 2>/dev/null; then
+        echo "Format violation: $file"
+        FAILED=1
+    fi
+done
+
+if [ "$FAILED" -ne 0 ]; then
+    echo "Format check failed. Run 'scripts/format' to fix."
+    exit 1
+fi
+
+echo "All files formatted correctly."
