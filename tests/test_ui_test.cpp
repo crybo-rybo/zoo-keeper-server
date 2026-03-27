@@ -15,9 +15,18 @@ TEST(TestUiTest, ResponseContent) {
     EXPECT_EQ(response->getHeader("Cache-Control"), "no-store");
 
     const std::string body(response->getBody());
-    const std::array<std::string_view, 8> expected_fragments = {
-        "GET /_test",           "/healthz",     "/v1/models",     "/v1/tools", "/v1/sessions",
-        "/v1/chat/completions", "Send message", "Create session",
+    const std::array<std::string_view, 11> expected_fragments = {
+        "GET /_test",
+        "/healthz",
+        "/v1/models",
+        "/v1/tools",
+        "/v1/sessions",
+        "/v1/chat/completions",
+        "Send message",
+        "Create session",
+        ".stack {\n      display: grid;\n      gap: 18px;\n      min-width: 0;",
+        "width: 100%;",
+        "max-width: 100%;",
     };
 
     for (const auto fragment : expected_fragments) {
