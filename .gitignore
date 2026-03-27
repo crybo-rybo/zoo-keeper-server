@@ -4,3 +4,4 @@
 CLAUDE.md
 AGENTS.md
 .cache/
+src/server/test_ui_app/node_modules/

@@ -5,11 +5,13 @@
 #include <string>
 #include <string_view>
 
-// These symbols are generated at build time by xxd from test_ui.html and test_ui.js.
+// These symbols are generated at build time by xxd from the bundled test UI assets.
 // NOLINTBEGIN(modernize-avoid-c-arrays)
 extern "C" {
-extern unsigned char kTestUiHtmlData[];
-extern unsigned int kTestUiHtmlData_len;
+extern unsigned char kTestUiTemplateData[];
+extern unsigned int kTestUiTemplateData_len;
+extern unsigned char kTestUiCssData[];
+extern unsigned int kTestUiCssData_len;
 extern unsigned char kTestUiJsData[];
 extern unsigned int kTestUiJsData_len;
 }
@@ -18,27 +20,43 @@ extern unsigned int kTestUiJsData_len;
 namespace zks::server {
 namespace {
 
-std::string escape_script_json(std::string json) {
+constexpr std::string_view kBootPlaceholder = "__ZKS_TEST_UI_BOOT__";
+constexpr std::string_view kCssPlaceholder = "__ZKS_TEST_UI_CSS__";
+constexpr std::string_view kJsPlaceholder = "__ZKS_TEST_UI_JS__";
+
+std::string escape_inline_script(std::string text) {
     size_t pos = 0;
-    while ((pos = json.find("</", pos)) != std::string::npos) {
-        json.replace(pos, 2, "<\\/");
+    while ((pos = text.find("</", pos)) != std::string::npos) {
+        text.replace(pos, 2, "<\\/");
         pos += 3;
     }
-    return json;
+    return text;
+}
+
+void replace_placeholder(std::string& body, std::string_view placeholder,
+                         std::string_view replacement) {
+    const auto pos = body.find(placeholder);
+    if (pos == std::string::npos) {
+        return;
+    }
+    body.replace(pos, placeholder.size(), replacement);
 }
 
 } // namespace
 
 drogon::HttpResponsePtr make_test_ui_response(const HealthSnapshot& snapshot) {
-    const std::string_view html_prefix(reinterpret_cast<const char*>(kTestUiHtmlData),
-                                       kTestUiHtmlData_len);
-    const std::string_view html_suffix(reinterpret_cast<const char*>(kTestUiJsData),
-                                       kTestUiJsData_len);
+    const std::string_view html_template(reinterpret_cast<const char*>(kTestUiTemplateData),
+                                         kTestUiTemplateData_len);
+    const std::string_view css_bundle(reinterpret_cast<const char*>(kTestUiCssData),
+                                      kTestUiCssData_len);
+    const std::string_view js_bundle(reinterpret_cast<const char*>(kTestUiJsData),
+                                     kTestUiJsData_len);
 
-    const auto boot_payload = escape_script_json(nlohmann::json{
+    const auto boot_payload = escape_inline_script(nlohmann::json{
         {"health",
          {{"ready", snapshot.ready},
           {"model", {{"id", snapshot.model_id}}},
+          {"version", snapshot.version},
           {"sessions",
            {{"enabled", snapshot.sessions.enabled},
             {"active", snapshot.sessions.active},
@@ -50,11 +68,10 @@ drogon::HttpResponsePtr make_test_ui_response(const HealthSnapshot& snapshot) {
     response->setStatusCode(drogon::k200OK);
     response->setContentTypeCodeAndCustomString(drogon::CT_TEXT_HTML, "text/html; charset=utf-8");
     response->addHeader("Cache-Control", "no-store");
-    std::string body;
-    body.reserve(html_prefix.size() + boot_payload.size() + html_suffix.size());
-    body.append(html_prefix);
-    body.append(boot_payload);
-    body.append(html_suffix);
+    std::string body(html_template);
+    replace_placeholder(body, kBootPlaceholder, boot_payload);
+    replace_placeholder(body, kCssPlaceholder, css_bundle);
+    replace_placeholder(body, kJsPlaceholder, escape_inline_script(std::string(js_bundle)));
     response->setBody(std::move(body));
     return response;
 }

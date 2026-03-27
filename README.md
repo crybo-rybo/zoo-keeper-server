@@ -41,16 +41,19 @@ cmake -S . -B build
 cmake --build build --parallel
 ```
 
-To compile the test-only browser console at `/_test`:
+To compile the test-only browser Capability Atlas at `/_test`:
 
 ```bash
 cmake -S . -B build-test-ui -DZKS_ENABLE_TEST_UI=ON
 cmake --build build-test-ui --parallel
 ```
 
+The UI-enabled build uses a small Node/npm frontend build step to bundle the
+atlas assets before embedding them into the server binary.
+
 | Option | Default | Purpose |
 |--------|---------|---------|
-| `ZKS_ENABLE_TEST_UI` | OFF | Browser test UI at `/_test` |
+| `ZKS_ENABLE_TEST_UI` | OFF | Browser Capability Atlas at `/_test` |
 | `ZKS_LIVE_SMOKE_MODEL` | (empty) | Path to GGUF model for live smoke test |
 | `ZOO_ENABLE_METAL` | ON (macOS) | Apple Metal GPU acceleration |
 | `ZOO_ENABLE_CUDA` | OFF | CUDA GPU acceleration |

@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>zoo-keeper-server Capability Atlas</title>
+  <link
+    rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='24' fill='%230a0a0a'/%3E%3Cpath d='M25 30h46v8L39 70h32v8H23v-8l32-32H25z' fill='%23b6ff66'/%3E%3C/svg%3E"
+  />
+  <style>__ZKS_TEST_UI_CSS__</style>
+</head>
+<body>
+  <div class="progress-bar" aria-hidden="true">
+    <div class="progress-bar__value" id="progress-bar-value"></div>
+  </div>
+
+  <header class="site-header" id="site-header">
+    <a class="brand-mark" href="#overview">
+      <span class="brand-mark__eyebrow">zoo-keeper-server</span>
+      <span class="brand-mark__title">Capability Atlas</span>
+    </a>
+    <nav class="chapter-nav" aria-label="Capability chapters">
+      <a class="chapter-nav__link" href="#overview" data-nav-link="overview">Overview</a>
+      <a class="chapter-nav__link" href="#inference" data-nav-link="inference">Inference</a>
+      <a class="chapter-nav__link" href="#memory" data-nav-link="memory">Memory</a>
+      <a class="chapter-nav__link" href="#tools" data-nav-link="tools">Tools</a>
+      <a class="chapter-nav__link" href="#operations" data-nav-link="operations">Operations</a>
+    </nav>
+    <div class="header-rail">
+      <button class="ghost-button" id="refresh-all-button" type="button">Refresh atlas</button>
+      <div class="status-chip health-dock" id="status-chip" data-tone="neutral">
+        <button class="health-dock__button" type="button" aria-label="Server health">
+          <span class="status-chip__dot"></span>
+          <svg class="health-dock__icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 12h4l2-4 4 8 2-4h4" />
+          </svg>
+        </button>
+        <div class="health-dock__panel">
+          <div class="health-dock__summary">
+            <span class="section-label">Server health</span>
+            <p id="status-text">Booting Capability Atlas.</p>
+          </div>
+          <div class="health-dock__stats">
+            <div class="hero-stat">
+              <span class="hero-stat__label">Readiness</span>
+              <span class="hero-stat__value" id="hero-ready-value">Starting</span>
+            </div>
+            <div class="hero-stat">
+              <span class="hero-stat__label">Model</span>
+              <span class="hero-stat__value" id="hero-model-value">-</span>
+            </div>
+            <div class="hero-stat">
+              <span class="hero-stat__label">Version</span>
+              <span class="hero-stat__value" id="hero-version-value">-</span>
+            </div>
+            <div class="hero-stat">
+              <span class="hero-stat__label">Sessions</span>
+              <span class="hero-stat__value" id="hero-session-value">-</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="atlas">
+    <section class="chapter chapter--hero" id="overview" data-chapter="overview" data-reveal>
+      <div class="chapter__inner chapter__inner--hero">
+        <div class="hero-copy">
+          <p class="hero-kicker">Capability Atlas</p>
+          <h1>Local inference, memory, tools, and operations in one live surface.</h1>
+          <p class="hero-lede" id="hero-lede">
+            Explore the real capabilities currently exposed by this server, backed by the same
+            APIs your clients use in production.
+          </p>
+          <div class="hero-actions">
+            <a class="primary-button" href="#inference">Enter live demos</a>
+            <a class="ghost-button ghost-button--light" href="#operations">Inspect the API</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="chapter-map" data-reveal>
+        <div class="chapter-map__intro">
+          <p class="section-label">Atlas map</p>
+          <h2>Four chapters, each tied to a live server capability.</h2>
+        </div>
+        <div class="chapter-map__grid" id="chapter-map-grid">
+          <a class="chapter-map__item" href="#inference">
+            <span class="chapter-map__index">01</span>
+            <span class="chapter-map__name">Inference</span>
+            <span class="chapter-map__summary">Streaming chat and response feel.</span>
+          </a>
+          <a class="chapter-map__item" href="#memory">
+            <span class="chapter-map__index">02</span>
+            <span class="chapter-map__name">Memory</span>
+            <span class="chapter-map__summary">Session continuity and lifecycle.</span>
+          </a>
+          <a class="chapter-map__item" href="#tools">
+            <span class="chapter-map__index">03</span>
+            <span class="chapter-map__name">Tools</span>
+            <span class="chapter-map__summary">Catalog, traces, and tool-backed answers.</span>
+          </a>
+          <a class="chapter-map__item" href="#operations">
+            <span class="chapter-map__index">04</span>
+            <span class="chapter-map__name">Operations</span>
+            <span class="chapter-map__summary">Health, metrics, and endpoint proof.</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter" id="inference" data-chapter="inference" data-reveal>
+      <div class="chapter__inner">
+        <div class="chapter-copy">
+          <p class="section-label">Inference</p>
+          <h2>Watch the shared agent answer live.</h2>
+          <p>
+            This chapter shows the model’s real response path, from prompt presets to SSE
+            streaming, with the raw payloads always a click away.
+          </p>
+          <div class="preset-strip" id="inference-presets">
+            <button type="button" data-inference-preset="Summarize how this server exposes zoo-keeper capabilities in three crisp bullets.">Three-bullet summary</button>
+            <button type="button" data-inference-preset="Describe the difference between stateless chat and session-backed chat for this server.">Stateless vs memory</button>
+            <button type="button" data-inference-preset="Write a terse operational readiness check for a local inference server.">Operational check</button>
+          </div>
+        </div>
+
+        <div class="interaction-shell">
+          <div class="interaction-toolbar">
+            <label class="field">
+              <span>Model</span>
+              <select id="model-select"></select>
+            </label>
+            <label class="toggle">
+              <input id="inference-stream" type="checkbox" checked />
+              <span>Stream tokens</span>
+            </label>
+          </div>
+
+          <label class="field field--wide">
+            <span>Prompt</span>
+            <textarea id="inference-prompt" rows="4" placeholder="Ask the server to demonstrate inference."></textarea>
+          </label>
+
+          <div class="action-row">
+            <button class="primary-button" id="inference-send" type="button">Send prompt</button>
+            <button class="ghost-button" id="inference-stop" type="button" disabled>Stop stream</button>
+            <button class="ghost-button" id="inference-clear" type="button">Clear transcript</button>
+          </div>
+
+          <div class="transcript-shell">
+            <div class="transcript-shell__header">
+              <span>Transcript</span>
+              <span id="inference-meta">Stateless mode</span>
+            </div>
+            <div class="transcript" id="inference-transcript"></div>
+          </div>
+
+          <details class="inspector">
+            <summary>Payload inspector</summary>
+            <div class="inspector__grid">
+              <div>
+                <p class="inspector__label">Last request</p>
+                <pre class="inspector__code" id="last-request">// No request yet.</pre>
+              </div>
+              <div>
+                <p class="inspector__label">Last response</p>
+                <pre class="inspector__code" id="last-response">// No response yet.</pre>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter chapter--dark" id="memory" data-chapter="memory" data-reveal>
+      <div class="chapter__inner">
+        <div class="chapter-copy">
+          <p class="section-label">Memory</p>
+          <h2>Prove continuity with server-owned sessions.</h2>
+          <p>
+            Create a live session, seed it with context, and verify that later turns can recall
+            what happened without resending the full transcript.
+          </p>
+          <div class="preset-strip" id="memory-presets">
+            <button type="button" data-memory-preset="Store this project codename in memory: Midnight Aviary. Reply only with 'stored'.">Seed memory</button>
+            <button type="button" data-memory-preset="What project codename did I ask you to remember?">Recall memory</button>
+          </div>
+        </div>
+
+        <div class="interaction-shell">
+          <div class="empty-state" id="memory-disabled-state" hidden>
+            <h3>Sessions are disabled</h3>
+            <p>
+              This server is currently running without session capacity, so the atlas is showing
+              the shape of the memory workflow instead of a live continuity demo.
+            </p>
+          </div>
+
+          <div class="interaction-stack" id="memory-enabled-shell">
+            <div class="interaction-toolbar">
+              <label class="field field--wide">
+                <span>Session system prompt</span>
+                <textarea id="memory-system-prompt" rows="3" placeholder="Optional system prompt for the live session."></textarea>
+              </label>
+            </div>
+
+            <div class="action-row">
+              <button class="primary-button" id="memory-create-session" type="button">Create session</button>
+              <button class="ghost-button" id="memory-refresh-session" type="button">Refresh session</button>
+              <button class="ghost-button" id="memory-delete-session" type="button" disabled>Delete session</button>
+            </div>
+
+            <div class="memory-meta" id="memory-meta">
+              <span>Session</span>
+              <strong id="memory-session-id">No active session</strong>
+              <span id="memory-session-summary">Create a session to begin the continuity demo.</span>
+            </div>
+
+            <label class="field field--wide">
+              <span>Memory prompt</span>
+              <textarea id="memory-prompt" rows="4" placeholder="Send a message inside the active session."></textarea>
+            </label>
+
+            <div class="action-row">
+              <button class="primary-button" id="memory-send" type="button">Send to session</button>
+            </div>
+
+            <div class="transcript-shell">
+              <div class="transcript-shell__header">
+                <span>Session transcript</span>
+                <span id="memory-meta-detail">Continuity path</span>
+              </div>
+              <div class="transcript" id="memory-transcript"></div>
+            </div>
+
+            <details class="inspector">
+              <summary>Session metadata</summary>
+              <pre class="inspector__code" id="memory-session-json">// No session created yet.</pre>
+            </details>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter" id="tools" data-chapter="tools" data-reveal>
+      <div class="chapter__inner">
+        <div class="chapter-copy">
+          <p class="section-label">Tools</p>
+          <h2>Surface tool calling as part of the product story.</h2>
+          <p>
+            Browse the tool catalog, run prompts designed to invite tool use, and inspect
+            invocation traces when the model reaches for server-owned functions.
+          </p>
+          <div class="preset-strip" id="tools-presets">
+            <button type="button" data-tools-preset="Use any available tools if they would help you summarize what this server can do right now.">Capability scan</button>
+            <button type="button" data-tools-preset="If there are tools available, use one and explain what happened. If not, say the tool catalog is empty.">Tool trace demo</button>
+          </div>
+        </div>
+
+        <div class="interaction-shell">
+          <div class="empty-state" id="tools-empty-state" hidden>
+            <h3>No tools are configured</h3>
+            <p>
+              The atlas still shows the server’s tool contract, but there are no live tool
+              handlers advertised by `/v1/tools` in this configuration.
+            </p>
+          </div>
+
+          <div id="tools-enabled-shell">
+            <div class="catalog" id="tools-catalog"></div>
+
+            <label class="field field--wide">
+              <span>Tool-oriented prompt</span>
+              <textarea id="tools-prompt" rows="4" placeholder="Ask for a response that might use a configured tool."></textarea>
+            </label>
+
+            <div class="action-row">
+              <button class="primary-button" id="tools-send" type="button">Run tool demo</button>
+            </div>
+
+            <div class="response-shell">
+              <p class="response-shell__label">Assistant response</p>
+              <div class="response-shell__body" id="tools-response">// No tool demo run yet.</div>
+            </div>
+
+            <div class="trace-shell">
+              <div class="transcript-shell__header">
+                <span>Tool trace</span>
+                <span id="tools-trace-meta">Awaiting invocation</span>
+              </div>
+              <div class="trace-list" id="tools-trace"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter chapter--dark" id="operations" data-chapter="operations" data-reveal>
+      <div class="chapter__inner">
+        <div class="chapter-copy">
+          <p class="section-label">Operations</p>
+          <h2>Close the loop with system proof.</h2>
+          <p>
+            The polish stops here and the evidence takes over: health, metrics, endpoint shapes,
+            and the last payloads the atlas sent to the server.
+          </p>
+          <div class="endpoint-list">
+            <code>GET /healthz</code>
+            <code>GET /v1/models</code>
+            <code>GET /v1/tools</code>
+            <code>POST /v1/sessions</code>
+            <code>POST /v1/chat/completions</code>
+            <code>GET /metrics</code>
+          </div>
+        </div>
+
+        <div class="interaction-shell">
+          <div class="action-row">
+            <button class="primary-button" id="operations-refresh-metrics" type="button">Refresh metrics</button>
+          </div>
+
+          <div class="metrics-grid">
+            <div class="metric-tile">
+              <span>Total requests</span>
+              <strong id="metric-requests-total">0</strong>
+            </div>
+            <div class="metric-tile">
+              <span>Errors</span>
+              <strong id="metric-requests-errors">0</strong>
+            </div>
+            <div class="metric-tile">
+              <span>Cancelled</span>
+              <strong id="metric-requests-cancelled">0</strong>
+            </div>
+            <div class="metric-tile">
+              <span>Queue rejected</span>
+              <strong id="metric-requests-rejected">0</strong>
+            </div>
+            <div class="metric-tile">
+              <span>Tool invocations</span>
+              <strong id="metric-tool-invocations">0</strong>
+            </div>
+            <div class="metric-tile">
+              <span>Uptime</span>
+              <strong id="metric-uptime">0s</strong>
+            </div>
+          </div>
+
+          <p class="metrics-note">Includes live atlas refreshes and demo traffic.</p>
+
+          <details class="inspector" open>
+            <summary>Last activity payloads</summary>
+            <div class="inspector__grid">
+              <div>
+                <p class="inspector__label">Last request</p>
+                <pre class="inspector__code" id="operations-request">// No request yet.</pre>
+              </div>
+              <div>
+                <p class="inspector__label">Last response</p>
+                <pre class="inspector__code" id="operations-response">// No response yet.</pre>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script id="zks-test-ui-boot" type="application/json">__ZKS_TEST_UI_BOOT__</script>
+  <script>__ZKS_TEST_UI_JS__</script>
+</body>
+</html>

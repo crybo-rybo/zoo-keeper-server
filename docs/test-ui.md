@@ -1,7 +1,7 @@
 # Test UI
 
-This repository can compile a small browser-based test console into the server
-binary. The console is served by the same Drogon process and is only available
+This repository can compile a small browser-based Capability Atlas into the
+server binary. The atlas is served by the same Drogon process and is only available
 when the project is built with `ZKS_ENABLE_TEST_UI=ON`.
 
 When enabled, the server exposes:
@@ -14,10 +14,14 @@ When enabled, the server exposes:
   - `POST /v1/sessions`
   - `DELETE /v1/sessions/{id}`
   - `POST /v1/chat/completions`
+  - `GET /metrics`
 
 ## Build
 
 Default builds do not include the UI.
+
+The UI-enabled build expects `node` and `npm` to be available so the atlas
+frontend can be bundled before it is embedded into the server binary.
 
 Configure a separate build directory with the UI enabled:
 
@@ -132,15 +136,18 @@ Notes:
 The page is same-origin with the API and uses the existing server endpoints
 directly.
 
-- Refresh server data loads `/healthz`, `/v1/models`, and `/v1/tools`
-- `/v1/tools` currently loads the server-owned tool catalog, which is empty in
-  the default build
-- Stateless chat sends the full local transcript to
-  `/v1/chat/completions`
-- Session chat first creates a session with `POST /v1/sessions`, then sends one
-  new `user` message plus `session_id` on each turn
-- Streaming mode uses the existing SSE response from
-  `POST /v1/chat/completions`
+- The `Overview` chapter reflects initial readiness and capability state from
+  embedded boot data, then refreshes live metadata from `/healthz`,
+  `/v1/models`, `/v1/tools`, and `/metrics`
+- The `Inference` chapter sends stateless chat completions and can use the
+  existing streaming SSE response from `POST /v1/chat/completions`
+- The `Memory` chapter creates sessions with `POST /v1/sessions`, refreshes
+  metadata with `GET /v1/sessions/{id}`, and tears sessions down with
+  `DELETE /v1/sessions/{id}`
+- The `Tools` chapter displays the server-owned tool catalog from `/v1/tools`
+  and surfaces `tool_invocations` from chat completion responses
+- The `Operations` chapter refreshes `/metrics` and exposes the last request and
+  response payloads sent by the atlas
 
 Reloading the page clears the browser-side transcript. Server-side session
 state remains until it expires or is deleted.
@@ -149,11 +156,13 @@ state remains until it expires or is deleted.
 
 The page lets you:
 
+- inspect the current model, readiness, version, and session availability
 - select the configured model returned by `/v1/models`
-- send stateless chat requests
-- create and delete a session if sessions are enabled
+- send stateless chat requests with or without streaming
+- create, refresh, and delete a session when sessions are enabled
 - provide an optional per-session `system_prompt` when creating a session
-- toggle streaming on and off
+- browse the advertised tool catalog and inspect tool traces when present
+- refresh operational metrics and inspect the most recent request/response
 
 The page does not let you change server bootstrap settings such as
 `bind_address`, `port`, or `zoo.model_path`. Those still come from the JSON
