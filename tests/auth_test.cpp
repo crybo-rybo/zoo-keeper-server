@@ -9,7 +9,7 @@ namespace {
 zks::server::ServerConfig make_config(std::optional<std::string> api_key = std::nullopt) {
     zks::server::ServerConfig config;
     config.model_id = "test-model";
-    config.zoo_config.model_path = "/tmp/test.gguf";
+    config.model_config.model_path = "/tmp/test.gguf";
     config.api_key = std::move(api_key);
     return config;
 }

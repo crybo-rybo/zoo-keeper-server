@@ -67,7 +67,7 @@ ApiResult<ChatMessage> parse_message(const nlohmann::json& json, std::vector<Cha
     // Move content out of the JSON value to avoid a copy. The json object is
     // not used after this point for the content field.
     auto content = json.at("content").get<std::string>();
-    ChatMessage message{MessageRole::User, {}, std::nullopt};
+    ChatMessage message{MessageRole::User, {}, {}};
 
     if (*role == MessageRole::Tool) {
         if (!json.contains("tool_call_id") || !json.at("tool_call_id").is_string()) {

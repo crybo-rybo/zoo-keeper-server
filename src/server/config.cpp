@@ -77,7 +77,13 @@ Result<void> ServerConfig::validate() const {
                                    "' is invalid: " + validation.error());
         }
     }
-    if (auto validation = zoo_config.validate(); !validation) {
+    if (auto validation = model_config.validate(); !validation) {
+        return std::unexpected(validation.error().to_string());
+    }
+    if (auto validation = agent_config.validate(); !validation) {
+        return std::unexpected(validation.error().to_string());
+    }
+    if (auto validation = default_generation.validate(); !validation) {
         return std::unexpected(validation.error().to_string());
     }
     return {};
@@ -250,7 +256,77 @@ void from_json(const nlohmann::json& j, ServerConfig& config) {
         throw nlohmann::json::other_error::create(
             501, "Server config must contain required key: zoo", nullptr);
     }
-    config.zoo_config = j.at("zoo").get<zoo::Config>();
+    {
+        const auto& zoo = j.at("zoo");
+        static constexpr std::array<std::string_view, 12> kZooAllowed = {
+            "model_path",
+            "context_size",
+            "n_gpu_layers",
+            "use_mmap",
+            "use_mlock",
+            "max_history_messages",
+            "request_queue_capacity",
+            "max_tokens",
+            "system_prompt",
+            "sampling",
+            "max_tool_iterations",
+            "max_tool_retries",
+        };
+        check_unknown_keys(zoo, "zoo config", kZooAllowed);
+
+        // Build sub-objects for each zoo config type.
+        nlohmann::json model_json;
+        if (zoo.contains("model_path")) {
+            model_json["model_path"] = zoo.at("model_path");
+        }
+        if (zoo.contains("context_size")) {
+            model_json["context_size"] = zoo.at("context_size");
+        }
+        if (zoo.contains("n_gpu_layers")) {
+            model_json["n_gpu_layers"] = zoo.at("n_gpu_layers");
+        }
+        if (zoo.contains("use_mmap")) {
+            model_json["use_mmap"] = zoo.at("use_mmap");
+        }
+        if (zoo.contains("use_mlock")) {
+            model_json["use_mlock"] = zoo.at("use_mlock");
+        }
+        if (!model_json.empty()) {
+            config.model_config = model_json.get<zoo::ModelConfig>();
+        }
+
+        nlohmann::json agent_json;
+        if (zoo.contains("max_history_messages")) {
+            agent_json["max_history_messages"] = zoo.at("max_history_messages");
+        }
+        if (zoo.contains("request_queue_capacity")) {
+            agent_json["request_queue_capacity"] = zoo.at("request_queue_capacity");
+        }
+        if (zoo.contains("max_tool_iterations")) {
+            agent_json["max_tool_iterations"] = zoo.at("max_tool_iterations");
+        }
+        if (zoo.contains("max_tool_retries")) {
+            agent_json["max_tool_retries"] = zoo.at("max_tool_retries");
+        }
+        if (!agent_json.empty()) {
+            config.agent_config = agent_json.get<zoo::AgentConfig>();
+        }
+
+        nlohmann::json gen_json;
+        if (zoo.contains("max_tokens")) {
+            gen_json["max_tokens"] = zoo.at("max_tokens");
+        }
+        if (zoo.contains("sampling")) {
+            gen_json["sampling"] = zoo.at("sampling");
+        }
+        if (!gen_json.empty()) {
+            config.default_generation = gen_json.get<zoo::GenerationOptions>();
+        }
+
+        if (zoo.contains("system_prompt")) {
+            zoo.at("system_prompt").get_to(config.system_prompt);
+        }
+    }
 }
 
 Result<ServerConfig> load_config(const std::filesystem::path& path) {

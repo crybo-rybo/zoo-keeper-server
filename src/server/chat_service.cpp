@@ -18,23 +18,6 @@ struct ConfiguredAgent {
     std::vector<ToolDefinition> tool_definitions;
 };
 
-/// Adapts a zoo::Expected<zoo::Response> future into a RuntimeResult<CompletionResult> future
-/// by converting the response (int→int64_t promotion for usage fields).
-///
-/// Uses std::launch::async (not deferred) so that wait_for() correctly reports
-/// ready/timeout. A deferred future always returns std::future_status::deferred,
-/// which breaks the fast-path check in completion_controller.cpp.
-std::future<RuntimeResult<CompletionResult>>
-adapt_zoo_future(std::future<zoo::Expected<zoo::Response>> zoo_future) {
-    return std::async(std::launch::async, [f = std::move(zoo_future)]() mutable {
-        auto result = f.get();
-        if (!result) {
-            return RuntimeResult<CompletionResult>{std::unexpected(result.error())};
-        }
-        return RuntimeResult<CompletionResult>{from_zoo_response(*result)};
-    });
-}
-
 Result<ConfiguredAgent> configure_tools(ConfiguredAgent configured, const ToolProvider& tools) {
     configured.tool_definitions.reserve(tools.tools.size());
 
@@ -57,41 +40,42 @@ Result<ConfiguredAgent> configure_tools(ConfiguredAgent configured, const ToolPr
         configured.tool_definitions.push_back(tool.definition);
     }
 
-    if (!configured.tool_definitions.empty()) {
-        configured.request_system_prompt =
-            configured.agent->build_tool_system_prompt(configured.request_system_prompt);
-        configured.agent->set_system_prompt(configured.request_system_prompt);
-    }
-
     return configured;
 }
 
-Result<ConfiguredAgent> create_configured_agent(const zoo::Config& base_config,
-                                                const ToolProvider& tools,
-                                                const std::optional<std::string>& extra_prompt) {
-    zoo::Config config = base_config;
-    const std::string effective_prompt =
-        combine_system_prompts(base_config.system_prompt.value_or(""), extra_prompt.value_or(""));
-    config.system_prompt =
-        effective_prompt.empty() ? std::nullopt : std::optional<std::string>(effective_prompt);
-
-    auto agent_result = zoo::Agent::create(config);
+Result<ConfiguredAgent> create_configured_agent(const zoo::ModelConfig& model_config,
+                                                const zoo::AgentConfig& agent_config,
+                                                const zoo::GenerationOptions& gen_options,
+                                                const std::string& system_prompt,
+                                                const ToolProvider& tools) {
+    auto agent_result = zoo::Agent::create(model_config, agent_config, gen_options);
     if (!agent_result) {
         return std::unexpected("Failed to create zoo::Agent: " + agent_result.error().to_string());
     }
 
+    if (!system_prompt.empty()) {
+        (*agent_result)->set_system_prompt(system_prompt);
+    }
+
     ConfiguredAgent configured{
         .agent = std::move(*agent_result),
-        .request_system_prompt = effective_prompt,
+        .request_system_prompt = system_prompt,
         .tool_definitions = {},
     };
 
     return configure_tools(std::move(configured), tools);
 }
 
-CompletionHandle wrap_zoo_handle(zoo::RequestHandle handle) {
-    const auto request_id = static_cast<std::uint64_t>(handle.id);
-    return make_completion_handle(request_id, adapt_zoo_future(std::move(handle.future)));
+CompletionHandle wrap_zoo_handle(zoo::RequestHandle<zoo::TextResponse> handle) {
+    const auto request_id = static_cast<std::uint64_t>(handle.id());
+    auto future = std::async(std::launch::async, [h = std::move(handle)]() mutable {
+        auto result = h.await_result();
+        if (!result) {
+            return RuntimeResult<CompletionResult>{std::unexpected(result.error())};
+        }
+        return RuntimeResult<CompletionResult>{from_zoo_response(*result)};
+    });
+    return make_completion_handle(request_id, std::move(future));
 }
 
 } // namespace
@@ -102,7 +86,13 @@ Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfi
 
 Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfig& config,
                                                                ToolProvider tools) {
-    auto shared_result = create_configured_agent(config.zoo_config, tools, std::nullopt);
+    auto gen_options = config.default_generation;
+    if (!tools.tools.empty()) {
+        gen_options.record_tool_trace = true;
+    }
+
+    auto shared_result = create_configured_agent(config.model_config, config.agent_config,
+                                                 gen_options, config.system_prompt, tools);
     if (!shared_result) {
         return std::unexpected(shared_result.error());
     }
@@ -110,21 +100,23 @@ Result<std::shared_ptr<ZooChatService>> ZooChatService::create(const ServerConfi
     auto shared_agent = std::move(shared_result->agent);
     auto session_store = std::make_unique<SessionStore>(config.model_id, config.sessions,
                                                         shared_result->request_system_prompt,
-                                                        config.zoo_config.max_history_messages);
+                                                        config.agent_config.max_history_messages);
 
-    return std::make_shared<ZooChatService>(config.model_id,
-                                            std::move(shared_result->request_system_prompt),
-                                            std::move(shared_result->tool_definitions),
-                                            std::move(shared_agent), std::move(session_store));
+    return std::make_shared<ZooChatService>(
+        config.model_id, std::move(shared_result->request_system_prompt),
+        std::move(shared_result->tool_definitions), std::move(shared_agent),
+        std::move(session_store), gen_options);
 }
 
 ZooChatService::ZooChatService(std::string model_id, std::string request_system_prompt,
                                std::vector<ToolDefinition> tool_metadata,
                                std::shared_ptr<zoo::Agent> shared_agent,
-                               std::unique_ptr<SessionStore> session_store)
+                               std::unique_ptr<SessionStore> session_store,
+                               zoo::GenerationOptions default_generation)
     : model_id_(std::move(model_id)), request_system_prompt_(std::move(request_system_prompt)),
       tool_metadata_(std::move(tool_metadata)), agent_(std::move(shared_agent)),
-      session_store_(std::move(session_store)) {}
+      default_generation_(std::move(default_generation)), session_store_(std::move(session_store)) {
+}
 
 ZooChatService::~ZooChatService() = default;
 
@@ -160,7 +152,14 @@ ZooChatService::start_completion(const ChatCompletionRequest& request,
             invalid_request_error("Unknown model: " + request.model, "model", "invalid_model"));
     }
 
-    auto handle = wrap_zoo_handle(agent_->complete(prepare_messages(request), std::move(callback)));
+    auto gen_options = merge_request_overrides(default_generation_, request);
+    auto messages = prepare_messages(request);
+    auto view = zoo::ConversationView(std::span<const ChatMessage>(messages));
+    zoo::AsyncTextCallback async_cb;
+    if (callback) {
+        async_cb = [cb = std::move(*callback)](std::string_view token) { cb(token); };
+    }
+    auto handle = wrap_zoo_handle(agent_->complete(view, gen_options, std::move(async_cb)));
     const auto request_id = handle.id;
     const auto created = now_seconds();
     const auto completion_id =
@@ -197,8 +196,13 @@ ZooChatService::start_session_completion(const ChatCompletionRequest& request,
         return std::unexpected(begin.error());
     }
 
-    auto handle =
-        wrap_zoo_handle(agent_->complete(std::move(begin->messages), std::move(callback)));
+    auto gen_options = merge_request_overrides(default_generation_, request);
+    zoo::ConversationView view(std::span<const ChatMessage>(begin->messages));
+    zoo::AsyncTextCallback async_cb;
+    if (callback) {
+        async_cb = [cb = std::move(*callback)](std::string_view token) { cb(token); };
+    }
+    auto handle = wrap_zoo_handle(agent_->complete(view, gen_options, std::move(async_cb)));
     const auto zoo_request_id = handle.id;
     const auto completion_id = "chatcmpl-" + std::to_string(tracking_id);
     const auto session_id = *request.session_id;

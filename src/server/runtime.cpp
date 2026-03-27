@@ -22,7 +22,7 @@ size_t continuation_worker_count() {
 
 size_t continuation_queue_depth(const ServerConfig& config) {
     const size_t request_capacity =
-        std::max<size_t>(1, static_cast<size_t>(config.zoo_config.request_queue_capacity));
+        std::max<size_t>(1, static_cast<size_t>(config.agent_config.request_queue_capacity));
     return std::max<size_t>(32, request_capacity * 2);
 }
 } // namespace

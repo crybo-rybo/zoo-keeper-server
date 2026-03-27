@@ -16,7 +16,7 @@ from_zoo_tool_metadata(const std::vector<zoo::tools::ToolMetadata>& metadata) {
     return definitions;
 }
 
-CompletionResult from_zoo_response(const zoo::Response& response) {
+CompletionResult from_zoo_response(const zoo::TextResponse& response) {
     CompletionResult converted;
     converted.text = response.text;
     converted.usage.prompt_tokens = response.usage.prompt_tokens;
@@ -25,8 +25,17 @@ CompletionResult from_zoo_response(const zoo::Response& response) {
     converted.metrics.latency_ms = response.metrics.latency_ms;
     converted.metrics.time_to_first_token_ms = response.metrics.time_to_first_token_ms;
     converted.metrics.tokens_per_second = response.metrics.tokens_per_second;
-    converted.tool_invocations = response.tool_invocations;
+    if (response.tool_trace) {
+        converted.tool_invocations = response.tool_trace->invocations;
+    }
     return converted;
+}
+
+zoo::GenerationOptions merge_request_overrides(const zoo::GenerationOptions& defaults,
+                                               const ChatCompletionRequest& /*request*/) {
+    // Task 4 will add per-request sampling overrides to ChatCompletionRequest.
+    // For now, just return the defaults unchanged.
+    return defaults;
 }
 
 } // namespace zks::server

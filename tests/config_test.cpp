@@ -62,8 +62,8 @@ TEST(ConfigTest, ValidConfigParsesCorrectly) {
     EXPECT_EQ(config->model_id, "demo-model");
     EXPECT_EQ(config->sessions.max_sessions, 3u);
     EXPECT_EQ(config->sessions.idle_ttl_seconds, 600u);
-    EXPECT_EQ(config->zoo_config.model_path, "/tmp/demo.gguf");
-    EXPECT_EQ(config->zoo_config.max_tokens, 32);
+    EXPECT_EQ(config->model_config.model_path, "/tmp/demo.gguf");
+    EXPECT_EQ(config->default_generation.max_tokens, 32);
 }
 
 TEST(ConfigTest, UnknownKeyRejected) {
@@ -297,7 +297,7 @@ TEST(ConfigTest, StartupWarningForRemoteBindWithoutAuth) {
     zks::server::ServerConfig config;
     config.bind_address = "0.0.0.0";
     config.model_id = "demo-model";
-    config.zoo_config.model_path = "/tmp/demo.gguf";
+    config.model_config.model_path = "/tmp/demo.gguf";
 
     auto warning = zks::server::startup_warning(config);
     ASSERT_TRUE(warning.has_value());
@@ -309,7 +309,7 @@ TEST(ConfigTest, LoopbackBindNoWarning) {
     zks::server::ServerConfig config;
     config.bind_address = "127.0.0.1";
     config.model_id = "demo-model";
-    config.zoo_config.model_path = "/tmp/demo.gguf";
+    config.model_config.model_path = "/tmp/demo.gguf";
 
     EXPECT_FALSE(zks::server::startup_warning(config).has_value());
 }
@@ -319,7 +319,7 @@ TEST(ConfigTest, AuthenticatedRemoteBindNoWarning) {
     config.bind_address = "0.0.0.0";
     config.model_id = "demo-model";
     config.api_key = "secret";
-    config.zoo_config.model_path = "/tmp/demo.gguf";
+    config.model_config.model_path = "/tmp/demo.gguf";
 
     EXPECT_FALSE(zks::server::startup_warning(config).has_value());
 }
