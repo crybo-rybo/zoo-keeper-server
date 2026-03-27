@@ -1,5 +1,6 @@
 #include "server/api_json.hpp"
 #include "server/streaming.hpp"
+#include "server/zoo_adapter.hpp"
 
 #include <gtest/gtest.h>
 
@@ -30,7 +31,7 @@ TEST(ApiTest, ParseValidChatCompletionRequest) {
 
 TEST(ApiTest, UnknownRequestFieldRejected) {
     auto parsed = zks::server::parse_chat_completion_request(
-        R"json({"model":"local-model","messages":[{"role":"user","content":"Hello"}],"temperature":0.2})json");
+        R"json({"model":"local-model","messages":[{"role":"user","content":"Hello"}],"bogus_field":true})json");
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().http_status, 400);
     EXPECT_EQ(parsed.error().code, std::optional<std::string>{"unknown_field"});
@@ -209,4 +210,70 @@ TEST(ApiTest, StreamingChunkFormat) {
     EXPECT_NE(chunk.find("\"content\":\"Hello\""), std::string::npos);
     EXPECT_NE(finish.find("\"finish_reason\":\"stop\""), std::string::npos);
     EXPECT_EQ(done, "data: [DONE]\n\n");
+}
+
+TEST(ApiTest, ParseRequestWithSamplingOverrides) {
+    auto parsed = zks::server::parse_chat_completion_request(
+        R"json({"model":"m","messages":[{"role":"user","content":"Hi"}],"temperature":0.3,"top_p":0.8,"max_tokens":100,"seed":42,"stop":["END"]})json");
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->temperature, std::optional<float>{0.3f});
+    EXPECT_EQ(parsed->top_p, std::optional<float>{0.8f});
+    EXPECT_EQ(parsed->max_tokens, std::optional<int>{100});
+    EXPECT_EQ(parsed->seed, std::optional<int>{42});
+    ASSERT_TRUE(parsed->stop.has_value());
+    EXPECT_EQ(parsed->stop->size(), 1u);
+    EXPECT_EQ(parsed->stop->at(0), "END");
+}
+
+TEST(ApiTest, ParseRequestWithoutSamplingOverrides) {
+    auto parsed = zks::server::parse_chat_completion_request(
+        R"json({"model":"m","messages":[{"role":"user","content":"Hi"}]})json");
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_FALSE(parsed->temperature.has_value());
+    EXPECT_FALSE(parsed->top_p.has_value());
+    EXPECT_FALSE(parsed->max_tokens.has_value());
+    EXPECT_FALSE(parsed->seed.has_value());
+    EXPECT_FALSE(parsed->stop.has_value());
+}
+
+TEST(ZooAdapterTest, MergeRequestOverridesPassthrough) {
+    zoo::GenerationOptions defaults;
+    defaults.sampling.temperature = 0.7f;
+    defaults.max_tokens = 100;
+
+    zks::server::ChatCompletionRequest request;
+    request.model = "m";
+
+    auto result = zks::server::merge_request_overrides(defaults, request);
+    EXPECT_FLOAT_EQ(result.sampling.temperature, 0.7f);
+    EXPECT_EQ(result.max_tokens, 100);
+}
+
+TEST(ZooAdapterTest, MergeRequestOverridesPartial) {
+    zoo::GenerationOptions defaults;
+    defaults.sampling.temperature = 0.7f;
+    defaults.sampling.top_p = 0.9f;
+    defaults.max_tokens = 100;
+
+    zks::server::ChatCompletionRequest request;
+    request.model = "m";
+    request.temperature = 0.2f;
+    request.max_tokens = 50;
+
+    auto result = zks::server::merge_request_overrides(defaults, request);
+    EXPECT_FLOAT_EQ(result.sampling.temperature, 0.2f);
+    EXPECT_FLOAT_EQ(result.sampling.top_p, 0.9f);
+    EXPECT_EQ(result.max_tokens, 50);
+}
+
+TEST(ZooAdapterTest, MergeRequestOverridesStopSequences) {
+    zoo::GenerationOptions defaults;
+
+    zks::server::ChatCompletionRequest request;
+    request.model = "m";
+    request.stop = std::vector<std::string>{"END", "STOP"};
+
+    auto result = zks::server::merge_request_overrides(defaults, request);
+    ASSERT_EQ(result.stop_sequences.size(), 2u);
+    EXPECT_EQ(result.stop_sequences[0], "END");
 }

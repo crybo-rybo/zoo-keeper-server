@@ -32,10 +32,23 @@ CompletionResult from_zoo_response(const zoo::TextResponse& response) {
 }
 
 zoo::GenerationOptions merge_request_overrides(const zoo::GenerationOptions& defaults,
-                                               const ChatCompletionRequest& /*request*/) {
-    // Task 4 will add per-request sampling overrides to ChatCompletionRequest.
-    // For now, just return the defaults unchanged.
-    return defaults;
+                                               const ChatCompletionRequest& request) {
+    auto opts = defaults;
+    if (request.temperature)
+        opts.sampling.temperature = *request.temperature;
+    if (request.top_p)
+        opts.sampling.top_p = *request.top_p;
+    if (request.top_k)
+        opts.sampling.top_k = *request.top_k;
+    if (request.repeat_penalty)
+        opts.sampling.repeat_penalty = *request.repeat_penalty;
+    if (request.max_tokens)
+        opts.max_tokens = *request.max_tokens;
+    if (request.seed)
+        opts.sampling.seed = *request.seed;
+    if (request.stop)
+        opts.stop_sequences = *request.stop;
+    return opts;
 }
 
 } // namespace zks::server
