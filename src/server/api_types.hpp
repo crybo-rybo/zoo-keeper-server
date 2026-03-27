@@ -156,6 +156,15 @@ struct ChatCompletionRequest {
     std::vector<ChatMessage> messages;
     bool stream = false;
     std::optional<std::string> session_id;
+
+    // Per-request sampling overrides (optional; server defaults used when absent).
+    std::optional<float> temperature;
+    std::optional<float> top_p;
+    std::optional<int> top_k;
+    std::optional<float> repeat_penalty;
+    std::optional<int> max_tokens;
+    std::optional<int> seed;
+    std::optional<std::vector<std::string>> stop;
 };
 
 struct SessionCreateRequest {

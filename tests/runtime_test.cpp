@@ -29,7 +29,7 @@ TEST(RuntimeTest, StopDrainsBackgroundTasks) {
     chat_service->set_model_id("runtime-test-model");
     zks::server::ServerConfig config;
     config.model_id = "runtime-test-model";
-    config.zoo_config.model_path = "/tmp/runtime-test-model.gguf";
+    config.model_config.model_path = "/tmp/runtime-test-model.gguf";
 
     auto runtime = zks::server::ServerRuntime::create_for_test(config, chat_service);
 

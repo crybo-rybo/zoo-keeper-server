@@ -33,23 +33,30 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    zoo::Config config;
-    config.model_path = argv[1];
-    config.context_size = 4096;
-    config.max_tokens = 32;
-    config.n_gpu_layers = 0;
-    config.system_prompt = "You are a concise assistant.";
+    zoo::ModelConfig model_config;
+    model_config.model_path = argv[1];
+    model_config.context_size = 4096;
+    model_config.n_gpu_layers = 0;
 
-    auto agent_result = zoo::Agent::create(config);
+    zoo::AgentConfig agent_config;
+
+    zoo::GenerationOptions gen_options;
+    gen_options.max_tokens = 32;
+
+    auto agent_result = zoo::Agent::create(model_config, agent_config, gen_options);
     if (!agent_result) {
         print_error(agent_result.error());
         return 1;
     }
 
+    (*agent_result)->set_system_prompt("You are a concise assistant.");
+
     std::string_view prompt = (argc == 3) ? std::string_view(argv[2]) : kDefaultPrompt;
     auto& agent = *agent_result;
-    auto handle = agent->chat(zoo::Message::user(std::string(prompt)));
-    auto response = handle.future.get();
+    std::vector<zoo::Message> messages = {zoo::Message::user(std::string(prompt))};
+    auto view = zoo::ConversationView(std::span<const zoo::Message>(messages));
+    auto handle = agent->complete(view, gen_options);
+    auto response = handle.await_result();
     if (!response) {
         print_error(response.error());
         return 1;

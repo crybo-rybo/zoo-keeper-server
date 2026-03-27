@@ -365,7 +365,8 @@ paths:
       summary: Create a chat completion
       description: >
         OpenAI-compatible subset. Supports `stream: true` for SSE streaming.
-        Accepted top-level fields: `model`, `messages`, `stream`, `session_id`.
+        Accepted top-level fields: `model`, `messages`, `stream`, `session_id`,
+        `temperature`, `top_p`, `top_k`, `repeat_penalty`, `max_tokens`, `seed`, `stop`.
         Unknown fields return 400 with `error.code = "unknown_field"`.
       requestBody:
         required: true
@@ -389,6 +390,29 @@ paths:
                   description: >
                     Associate with a server-owned session. When present, `messages`
                     must contain exactly one new user message.
+                temperature:
+                  type: number
+                  description: Sampling temperature override. 0.0 = greedy.
+                top_p:
+                  type: number
+                  description: Nucleus sampling cutoff [0.0, 1.0].
+                top_k:
+                  type: integer
+                  description: Top-K sampling limit.
+                repeat_penalty:
+                  type: number
+                  description: Repetition penalty factor.
+                max_tokens:
+                  type: integer
+                  description: Maximum tokens to generate.
+                seed:
+                  type: integer
+                  description: RNG seed for reproducibility.
+                stop:
+                  type: array
+                  items:
+                    type: string
+                  description: Custom stop sequences.
       responses:
         "200":
           description: Completion result (non-streaming) or SSE stream (streaming)

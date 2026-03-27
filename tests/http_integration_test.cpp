@@ -61,7 +61,7 @@ class HttpIntegrationTest : public ::testing::Test {
         zks::server::ServerConfig config;
         config.model_id = "integration-test-model";
         config.api_key = "test-secret";
-        config.zoo_config.model_path = "/tmp/integration-test.gguf";
+        config.model_config.model_path = "/tmp/integration-test.gguf";
         config.http.client_max_body_size_bytes = 512;
 
         g_state->runtime =

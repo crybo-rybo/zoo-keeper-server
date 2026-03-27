@@ -67,7 +67,7 @@ ApiResult<ChatMessage> parse_message(const nlohmann::json& json, std::vector<Cha
     // Move content out of the JSON value to avoid a copy. The json object is
     // not used after this point for the content field.
     auto content = json.at("content").get<std::string>();
-    ChatMessage message{MessageRole::User, {}, std::nullopt};
+    ChatMessage message{MessageRole::User, {}, {}};
 
     if (*role == MessageRole::Tool) {
         if (!json.contains("tool_call_id") || !json.at("tool_call_id").is_string()) {
@@ -169,8 +169,9 @@ ApiResult<ChatCompletionRequest> parse_chat_completion_request(std::string_view 
             invalid_request_error(std::string("Invalid JSON body: ") + error.what(), "body"));
     }
 
-    static constexpr std::array<const char*, 4> kAllowedKeys = {"model", "messages", "stream",
-                                                                "session_id"};
+    static constexpr std::array<const char*, 11> kAllowedKeys = {
+        "model", "messages",       "stream",     "session_id", "temperature", "top_p",
+        "top_k", "repeat_penalty", "max_tokens", "seed",       "stop"};
     if (auto unknown_keys = reject_api_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
         return std::unexpected(unknown_keys.error());
     }
@@ -204,6 +205,62 @@ ApiResult<ChatCompletionRequest> parse_chat_completion_request(std::string_view 
             return std::unexpected(
                 invalid_request_error("session_id must not be empty", "session_id"));
         }
+    }
+
+    // Per-request sampling overrides.
+    if (auto it = json.find("temperature"); it != json.end()) {
+        if (!it->is_number()) {
+            return std::unexpected(
+                invalid_request_error("temperature must be a number", "temperature"));
+        }
+        request.temperature = it->get<float>();
+    }
+    if (auto it = json.find("top_p"); it != json.end()) {
+        if (!it->is_number()) {
+            return std::unexpected(invalid_request_error("top_p must be a number", "top_p"));
+        }
+        request.top_p = it->get<float>();
+    }
+    if (auto it = json.find("top_k"); it != json.end()) {
+        if (!it->is_number_integer()) {
+            return std::unexpected(invalid_request_error("top_k must be an integer", "top_k"));
+        }
+        request.top_k = it->get<int>();
+    }
+    if (auto it = json.find("repeat_penalty"); it != json.end()) {
+        if (!it->is_number()) {
+            return std::unexpected(
+                invalid_request_error("repeat_penalty must be a number", "repeat_penalty"));
+        }
+        request.repeat_penalty = it->get<float>();
+    }
+    if (auto it = json.find("max_tokens"); it != json.end()) {
+        if (!it->is_number_integer()) {
+            return std::unexpected(
+                invalid_request_error("max_tokens must be an integer", "max_tokens"));
+        }
+        request.max_tokens = it->get<int>();
+    }
+    if (auto it = json.find("seed"); it != json.end()) {
+        if (!it->is_number_integer()) {
+            return std::unexpected(invalid_request_error("seed must be an integer", "seed"));
+        }
+        request.seed = it->get<int>();
+    }
+    if (auto it = json.find("stop"); it != json.end()) {
+        if (!it->is_array()) {
+            return std::unexpected(
+                invalid_request_error("stop must be an array of strings", "stop"));
+        }
+        std::vector<std::string> stop_sequences;
+        for (const auto& entry : *it) {
+            if (!entry.is_string()) {
+                return std::unexpected(
+                    invalid_request_error("each stop entry must be a string", "stop"));
+            }
+            stop_sequences.push_back(entry.get<std::string>());
+        }
+        request.stop = std::move(stop_sequences);
     }
 
     const auto& messages_json = json.at("messages");
@@ -351,6 +408,10 @@ ApiError map_runtime_error_to_api_error(const RuntimeError& error) {
     case RuntimeErrorCode::ToolRetriesExhausted:
     case RuntimeErrorCode::ToolLoopLimitReached:
         return server_error(error.message, "tool_retries_exhausted");
+    case RuntimeErrorCode::InvalidOutputSchema:
+        return invalid_request_error(error.message, std::nullopt, "invalid_output_schema");
+    case RuntimeErrorCode::ExtractionFailed:
+        return server_error(error.message, "extraction_failed");
     case RuntimeErrorCode::Unknown:
         break;
     }

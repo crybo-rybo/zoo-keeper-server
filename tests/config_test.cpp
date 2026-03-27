@@ -62,8 +62,8 @@ TEST(ConfigTest, ValidConfigParsesCorrectly) {
     EXPECT_EQ(config->model_id, "demo-model");
     EXPECT_EQ(config->sessions.max_sessions, 3u);
     EXPECT_EQ(config->sessions.idle_ttl_seconds, 600u);
-    EXPECT_EQ(config->zoo_config.model_path, "/tmp/demo.gguf");
-    EXPECT_EQ(config->zoo_config.max_tokens, 32);
+    EXPECT_EQ(config->model_config.model_path, "/tmp/demo.gguf");
+    EXPECT_EQ(config->default_generation.max_tokens, 32);
 }
 
 TEST(ConfigTest, UnknownKeyRejected) {
@@ -297,7 +297,7 @@ TEST(ConfigTest, StartupWarningForRemoteBindWithoutAuth) {
     zks::server::ServerConfig config;
     config.bind_address = "0.0.0.0";
     config.model_id = "demo-model";
-    config.zoo_config.model_path = "/tmp/demo.gguf";
+    config.model_config.model_path = "/tmp/demo.gguf";
 
     auto warning = zks::server::startup_warning(config);
     ASSERT_TRUE(warning.has_value());
@@ -309,7 +309,7 @@ TEST(ConfigTest, LoopbackBindNoWarning) {
     zks::server::ServerConfig config;
     config.bind_address = "127.0.0.1";
     config.model_id = "demo-model";
-    config.zoo_config.model_path = "/tmp/demo.gguf";
+    config.model_config.model_path = "/tmp/demo.gguf";
 
     EXPECT_FALSE(zks::server::startup_warning(config).has_value());
 }
@@ -319,7 +319,57 @@ TEST(ConfigTest, AuthenticatedRemoteBindNoWarning) {
     config.bind_address = "0.0.0.0";
     config.model_id = "demo-model";
     config.api_key = "secret";
-    config.zoo_config.model_path = "/tmp/demo.gguf";
+    config.model_config.model_path = "/tmp/demo.gguf";
 
     EXPECT_FALSE(zks::server::startup_warning(config).has_value());
+}
+
+TEST(ConfigTest, ZooBlockPopulatesSplitConfigTypes) {
+    TempDir tmp;
+    auto file = tmp.path / "split.json";
+    ASSERT_TRUE(write_text_file(file,
+                                R"json({
+  "model_id": "demo-model",
+  "zoo": {
+    "model_path": "/tmp/demo.gguf",
+    "context_size": 4096,
+    "n_gpu_layers": 8,
+    "use_mmap": false,
+    "max_history_messages": 32,
+    "request_queue_capacity": 16,
+    "max_tokens": 64,
+    "system_prompt": "Be helpful.",
+    "sampling": { "temperature": 0.5 }
+  }
+})json"));
+
+    auto config = zks::server::load_config(file);
+    ASSERT_TRUE(config.has_value());
+    EXPECT_EQ(config->model_config.model_path, "/tmp/demo.gguf");
+    EXPECT_EQ(config->model_config.context_size, 4096);
+    EXPECT_EQ(config->model_config.n_gpu_layers, 8);
+    EXPECT_FALSE(config->model_config.use_mmap);
+    EXPECT_EQ(config->agent_config.max_history_messages, 32u);
+    EXPECT_EQ(config->agent_config.request_queue_capacity, 16u);
+    EXPECT_EQ(config->default_generation.max_tokens, 64);
+    EXPECT_FLOAT_EQ(config->default_generation.sampling.temperature, 0.5f);
+    EXPECT_EQ(config->system_prompt, "Be helpful.");
+}
+
+TEST(ConfigTest, UnknownZooKeyRejected) {
+    TempDir tmp;
+    auto file = tmp.path / "bad_zoo.json";
+    ASSERT_TRUE(write_text_file(file,
+                                R"json({
+  "model_id": "demo-model",
+  "zoo": {
+    "model_path": "/tmp/demo.gguf",
+    "bogus_key": true
+  }
+})json"));
+
+    auto config = zks::server::load_config(file);
+    ASSERT_FALSE(config.has_value());
+    EXPECT_NE(config.error().find("Unknown"), std::string::npos);
+    EXPECT_NE(config.error().find("bogus_key"), std::string::npos);
 }

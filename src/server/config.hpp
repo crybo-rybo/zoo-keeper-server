@@ -56,7 +56,10 @@ struct ServerConfig {
     HttpConfig http;
     SessionConfig sessions;
     std::vector<CommandToolConfig> tools;
-    zoo::Config zoo_config;
+    zoo::ModelConfig model_config;
+    zoo::AgentConfig agent_config;
+    zoo::GenerationOptions default_generation;
+    std::string system_prompt;
 
     [[nodiscard]] Result<void> validate() const;
 };

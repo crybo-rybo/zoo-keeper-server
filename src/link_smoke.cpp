@@ -3,7 +3,7 @@
 #include <iostream>
 
 int main() {
-    auto agent_result = zoo::Agent::create(zoo::Config{});
+    auto agent_result = zoo::Agent::create(zoo::ModelConfig{});
     if (!agent_result) {
         const zoo::Error& error = agent_result.error();
         if (error.code == zoo::ErrorCode::InvalidModelPath) {
