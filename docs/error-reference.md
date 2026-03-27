@@ -29,6 +29,7 @@ Returned when the request is malformed or violates a constraint.
 | `invalid_role` | Message role is not one of `system`, `user`, `assistant`, or `tool`. |
 | `invalid_message_sequence` | Messages violate role-ordering rules (e.g., consecutive same-role, tool response first). |
 | `invalid_config` | Zoo configuration or sampling parameter is invalid. |
+| `invalid_output_schema` | A structured extraction output schema is malformed or unsupported. |
 | `context_window_exceeded` | The prompt exceeds the model's available context window. |
 | `tool_not_found` | A referenced tool name is not registered on the agent. |
 | `invalid_model` | The `model` field does not match the server's configured `model_id`. |
@@ -96,6 +97,7 @@ Returned when the server encounters an internal failure during inference.
 | `request_timeout` | The request exceeded the configured timeout. |
 | `tool_execution_failed` | A registered tool handler returned an error, including command-tool exit failures, invalid stdout, or timeouts. |
 | `tool_retries_exhausted` | Tool-call validation retries were exhausted. |
+| `extraction_failed` | Structured extraction could not produce schema-conforming output. |
 | `runtime_error` | Catch-all for unmapped internal errors. |
 
 ---
