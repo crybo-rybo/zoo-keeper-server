@@ -1,0 +1,50 @@
+#!/bin/sh
+set -e
+
+# --- Defaults ---
+BUILD_DIR="build"
+CMAKE_EXTRA=""
+TEST_UI=false
+SANITIZE=false
+
+usage() {
+    echo "Usage: scripts/build [--test-ui] [--sanitize]"
+    echo ""
+    echo "Options:"
+    echo "  --test-ui    Enable browser test UI at /_test (uses build-test-ui/)"
+    echo "  --sanitize   Enable ASan/UBSan (uses build-asan/)"
+    exit 1
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        --test-ui)   TEST_UI=true ;;
+        --sanitize)  SANITIZE=true ;;
+        -h|--help)   usage ;;
+        *)           echo "Unknown option: $arg"; usage ;;
+    esac
+done
+
+if [ "$TEST_UI" = true ] && [ "$SANITIZE" = true ]; then
+    echo "Error: --test-ui and --sanitize cannot be combined" >&2
+    exit 1
+fi
+
+if [ "$TEST_UI" = true ]; then
+    BUILD_DIR="build-test-ui"
+    CMAKE_EXTRA="-DZKS_ENABLE_TEST_UI=ON"
+elif [ "$SANITIZE" = true ]; then
+    BUILD_DIR="build-asan"
+    CMAKE_EXTRA="-DCMAKE_C_FLAGS=-fsanitize=address,undefined -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined"
+fi
+
+# --- Auto-init submodules if needed ---
+if [ ! -d "extern/zoo-keeper/.git" ]; then
+    echo "Initializing submodules..."
+    git submodule update --init --recursive
+fi
+
+# --- Configure and build ---
+echo "Building in ${BUILD_DIR}/"
+cmake -S . -B "$BUILD_DIR" -DBUILD_TESTING=ON $CMAKE_EXTRA
+cmake --build "$BUILD_DIR" --parallel

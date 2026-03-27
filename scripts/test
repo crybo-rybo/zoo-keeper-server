@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+# --- Parse arguments ---
+# Pass-through args for ctest (e.g., -R <pattern>)
+CTEST_ARGS=""
+for arg in "$@"; do
+    CTEST_ARGS="$CTEST_ARGS $arg"
+done
+
+# --- Build first ---
+scripts/build
+
+# --- Run tests ---
+echo "Running tests..."
+ctest --test-dir build --output-on-failure $CTEST_ARGS

@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+# --- Find clang-format (prefer version 22) ---
+if command -v clang-format-22 >/dev/null 2>&1; then
+    FORMATTER="clang-format-22"
+elif command -v clang-format >/dev/null 2>&1; then
+    FORMATTER="clang-format"
+else
+    echo "Error: clang-format not found on PATH" >&2
+    exit 1
+fi
+
+echo "Using: $FORMATTER ($($FORMATTER --version))"
+
+# --- Find and format source files ---
+find src tests -type f \( -name '*.cpp' -o -name '*.hpp' \) | while IFS= read -r file; do
+    "$FORMATTER" -i "$file"
+done
+
+echo "Formatted all source files."
