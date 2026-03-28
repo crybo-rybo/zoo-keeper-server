@@ -19,28 +19,6 @@
 namespace zks::server {
 namespace {
 
-nlohmann::json make_tool_invocation_body(const ToolInvocationRecord& invocation) {
-    nlohmann::json body = {{"id", invocation.id},
-                           {"name", invocation.name},
-                           {"status", zoo::to_string(invocation.status)}};
-    try {
-        body["arguments"] = nlohmann::json::parse(invocation.arguments_json);
-    } catch (...) {
-        body["arguments"] = invocation.arguments_json;
-    }
-    if (invocation.result_json.has_value()) {
-        try {
-            body["result"] = nlohmann::json::parse(*invocation.result_json);
-        } catch (...) {
-            body["result"] = *invocation.result_json;
-        }
-    }
-    if (invocation.error.has_value()) {
-        body["error"] = invocation.error->message;
-    }
-    return body;
-}
-
 nlohmann::json make_message_body(const ChatMessage& message) {
     nlohmann::json body{{"role", to_string(message.role)}, {"content", message.content}};
     if (!message.tool_call_id.empty()) {
@@ -68,30 +46,6 @@ drogon::HttpResponsePtr make_no_content_response() {
 
 drogon::HttpResponsePtr make_accepted_response(const nlohmann::json& body = {}) {
     return make_json_response(body, drogon::k202Accepted);
-}
-
-nlohmann::json make_extraction_body(std::string_view extraction_id, std::int64_t created,
-                                    std::string_view model_id, const ExtractionResult& response) {
-    nlohmann::json tool_invocations = nlohmann::json::array();
-    for (const auto& invocation : response.tool_invocations) {
-        tool_invocations.push_back(make_tool_invocation_body(invocation));
-    }
-
-    return {{"id", extraction_id},
-            {"object", "extraction"},
-            {"created", created},
-            {"model", model_id},
-            {"text", response.text},
-            {"data", response.data},
-            {"usage",
-             {{"prompt_tokens", response.usage.prompt_tokens},
-              {"completion_tokens", response.usage.completion_tokens},
-              {"total_tokens", response.usage.total_tokens}}},
-            {"zoo_metrics",
-             {{"latency_ms", response.metrics.latency_ms.count()},
-              {"time_to_first_token_ms", response.metrics.time_to_first_token_ms.count()},
-              {"tokens_per_second", response.metrics.tokens_per_second}}},
-            {"tool_invocations", std::move(tool_invocations)}};
 }
 
 nlohmann::json make_runtime_body(const ServerRuntime& runtime) {

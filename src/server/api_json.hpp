@@ -50,6 +50,9 @@ drogon::HttpResponsePtr make_chat_completion_response(std::string_view completio
 drogon::HttpResponsePtr make_extraction_response(std::string_view extraction_id,
                                                  std::int64_t created, std::string_view model_id,
                                                  const ExtractionResult& response);
+/// Builds the extraction response body JSON (used by both streaming and non-streaming paths).
+nlohmann::json make_extraction_body(std::string_view extraction_id, std::int64_t created,
+                                    std::string_view model_id, const ExtractionResult& response);
 
 /// Maps a zoo runtime error into the public API error shape.
 ApiError map_runtime_error_to_api_error(const RuntimeError& error);

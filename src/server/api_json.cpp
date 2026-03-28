@@ -232,6 +232,17 @@ nlohmann::json make_chat_completion_body(std::string_view completion_id, std::in
         {"tool_invocations", std::move(tool_invocations)}};
 }
 
+nlohmann::json make_session_body(const SessionSummary& summary) {
+    return nlohmann::json{{"id", summary.id},
+                          {"object", "session"},
+                          {"model", summary.model},
+                          {"created", summary.created},
+                          {"last_used", summary.last_used},
+                          {"expires_at", summary.expires_at}};
+}
+
+} // namespace
+
 nlohmann::json make_extraction_body(std::string_view extraction_id, std::int64_t created,
                                     std::string_view model_id, const ExtractionResult& response) {
     nlohmann::json tool_invocations = nlohmann::json::array();
@@ -256,17 +267,6 @@ nlohmann::json make_extraction_body(std::string_view extraction_id, std::int64_t
           {"tokens_per_second", response.metrics.tokens_per_second}}},
         {"tool_invocations", std::move(tool_invocations)}};
 }
-
-nlohmann::json make_session_body(const SessionSummary& summary) {
-    return nlohmann::json{{"id", summary.id},
-                          {"object", "session"},
-                          {"model", summary.model},
-                          {"created", summary.created},
-                          {"last_used", summary.last_used},
-                          {"expires_at", summary.expires_at}};
-}
-
-} // namespace
 
 ApiResult<ChatCompletionRequest> parse_chat_completion_request(std::string_view body) {
     nlohmann::json json;
