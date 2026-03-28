@@ -127,8 +127,8 @@
           </div>
         </div>
 
-        <div class="interaction-shell">
-          <div class="interaction-toolbar">
+        <div class="interaction-shell interaction-shell--chat">
+          <div class="interaction-toolbar interaction-toolbar--chat">
             <label class="field">
               <span>Model</span>
               <select id="model-select"></select>
@@ -139,23 +139,25 @@
             </label>
           </div>
 
-          <label class="field field--wide">
-            <span>Prompt</span>
-            <textarea id="inference-prompt" rows="4" placeholder="Ask the server to demonstrate inference."></textarea>
-          </label>
-
-          <div class="action-row">
-            <button class="primary-button" id="inference-send" type="button">Send prompt</button>
-            <button class="ghost-button" id="inference-stop" type="button" disabled>Stop stream</button>
-            <button class="ghost-button" id="inference-clear" type="button">Clear transcript</button>
-          </div>
-
-          <div class="transcript-shell">
+          <div class="transcript-shell transcript-shell--chat">
             <div class="transcript-shell__header">
               <span>Transcript</span>
               <span id="inference-meta">Stateless mode</span>
             </div>
             <div class="transcript" id="inference-transcript"></div>
+          </div>
+
+          <div class="chat-composer">
+            <label class="field field--wide">
+              <span>Message</span>
+              <textarea id="inference-prompt" rows="3" placeholder="Ask the server to demonstrate inference."></textarea>
+            </label>
+
+            <div class="action-row action-row--chat">
+              <button class="primary-button" id="inference-send" type="button">Send</button>
+              <button class="ghost-button" id="inference-stop" type="button" disabled>Stop stream</button>
+              <button class="ghost-button" id="inference-clear" type="button">Clear transcript</button>
+            </div>
           </div>
 
           <details class="inspector">

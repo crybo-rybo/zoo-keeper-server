@@ -373,6 +373,11 @@ h3 {
   align-items: stretch;
 }
 
+.interaction-toolbar--chat {
+  justify-content: space-between;
+  align-items: end;
+}
+
 .primary-button,
 .ghost-button,
 .preset-strip button {
@@ -553,6 +558,10 @@ h3 {
     opacity 220ms ease;
 }
 
+.interaction-shell--chat {
+  align-content: start;
+}
+
 .field {
   display: grid;
   gap: 8px;
@@ -604,6 +613,10 @@ textarea {
   gap: 12px;
 }
 
+.transcript-shell--chat {
+  min-height: 0;
+}
+
 .transcript-shell__header {
   display: flex;
   justify-content: space-between;
@@ -631,6 +644,11 @@ textarea {
   border-radius: var(--radius-panel);
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.01);
+}
+
+.transcript-shell--chat .transcript {
+  height: 420px;
+  max-height: 420px;
 }
 
 .bubble {
@@ -667,6 +685,23 @@ pre {
 .trace-list__empty {
   margin: 0;
   color: var(--text-muted);
+}
+
+.chat-composer {
+  display: grid;
+  gap: 14px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-composer textarea {
+  min-height: 124px;
+  max-height: 124px;
+  resize: none;
+}
+
+.action-row--chat {
+  align-items: stretch;
 }
 
 .memory-meta {
@@ -893,6 +928,11 @@ body.is-loaded .chapter[data-active="true"] .interaction-shell {
     position: static;
   }
 
+  .interaction-toolbar--chat {
+    justify-content: flex-start;
+    align-items: center;
+  }
+
   body.is-loaded .chapter[data-active="false"] .chapter__inner,
   body.is-loaded .chapter[data-active="false"] .chapter-map,
   body.is-loaded .chapter[data-active="false"] .interaction-shell {
@@ -934,6 +974,16 @@ body.is-loaded .chapter[data-active="true"] .interaction-shell {
   .action-row,
   .interaction-toolbar {
     width: 100%;
+  }
+
+  .transcript-shell--chat .transcript {
+    height: 340px;
+    max-height: 340px;
+  }
+
+  .chat-composer textarea {
+    min-height: 110px;
+    max-height: 110px;
   }
 
   .chapter-nav {
