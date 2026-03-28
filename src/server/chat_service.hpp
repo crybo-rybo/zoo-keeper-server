@@ -188,6 +188,7 @@ class ZooChatService final : public ChatService {
         public_request_cancellers_;
     mutable std::mutex agent_history_mutex_;
     zoo::HistorySnapshot agent_history_;
+    mutable std::mutex system_prompt_mutex_;
 };
 
 } // namespace zks::server
