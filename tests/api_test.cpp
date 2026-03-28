@@ -236,6 +236,72 @@ TEST(ApiTest, ParseRequestWithoutSamplingOverrides) {
     EXPECT_FALSE(parsed->stop.has_value());
 }
 
+TEST(ApiTest, ParseRequestWithExtendedZooOverrides) {
+    auto parsed = zks::server::parse_chat_completion_request(
+        R"json({"model":"m","messages":[{"role":"user","content":"Hi"}],"top_k":8,"repeat_penalty":1.25,"repeat_last_n":96,"record_tool_trace":true})json");
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->top_k, std::optional<int>{8});
+    EXPECT_EQ(parsed->repeat_penalty, std::optional<float>{1.25f});
+    EXPECT_EQ(parsed->repeat_last_n, std::optional<int>{96});
+    EXPECT_EQ(parsed->record_tool_trace, std::optional<bool>{true});
+}
+
+TEST(ApiTest, ParseValidExtractionRequest) {
+    auto parsed = zks::server::parse_extraction_request(
+        R"json({"model":"local-model","schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"messages":[{"role":"user","content":"Alice"}],"stream":true,"record_tool_trace":false})json");
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->model, "local-model");
+    EXPECT_TRUE(parsed->stream);
+    ASSERT_TRUE(parsed->record_tool_trace.has_value());
+    EXPECT_FALSE(*parsed->record_tool_trace);
+    EXPECT_EQ(parsed->messages.size(), 1u);
+    EXPECT_EQ(parsed->messages.front().role, zks::server::MessageRole::User);
+    EXPECT_TRUE(parsed->schema.is_object());
+    EXPECT_EQ(parsed->schema.at("type"), "object");
+}
+
+TEST(ApiTest, ParseExtractionRequestRejectsUnknownField) {
+    auto parsed = zks::server::parse_extraction_request(
+        R"json({"model":"local-model","schema":{"type":"object","properties":{}},"messages":[{"role":"user","content":"Alice"}],"bogus":true})json");
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().http_status, 400);
+    EXPECT_EQ(parsed.error().code, std::optional<std::string>{"unknown_field"});
+}
+
+TEST(ApiTest, ParseValidAgentChatRequest) {
+    auto parsed = zks::server::parse_agent_chat_request(
+        R"json({"model":"local-model","message":{"role":"user","content":"Remember this"},"record_tool_trace":true})json");
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->model, "local-model");
+    EXPECT_EQ(parsed->message.role, zks::server::MessageRole::User);
+    EXPECT_EQ(parsed->message.content, "Remember this");
+    EXPECT_EQ(parsed->record_tool_trace, std::optional<bool>{true});
+}
+
+TEST(ApiTest, ParseValidAgentHistoryRequest) {
+    auto parsed = zks::server::parse_agent_history_request(
+        R"json({"messages":[{"role":"system","content":"Base prompt"},{"role":"user","content":"Hello"}]})json");
+    ASSERT_TRUE(parsed.has_value());
+    ASSERT_EQ(parsed->messages.size(), 2u);
+    EXPECT_EQ(parsed->messages[0].role, zks::server::MessageRole::System);
+    EXPECT_EQ(parsed->messages[1].role, zks::server::MessageRole::User);
+}
+
+TEST(ApiTest, ParseValidAgentHistoryMessageRequest) {
+    auto parsed = zks::server::parse_agent_history_message_request(
+        R"json({"message":{"role":"assistant","content":"Stored reply"}})json");
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->role, zks::server::MessageRole::Assistant);
+    EXPECT_EQ(parsed->content, "Stored reply");
+}
+
+TEST(ApiTest, ParseValidSystemPromptRequest) {
+    auto parsed =
+        zks::server::parse_system_prompt_request(R"json({"system_prompt":"You are concise."})json");
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->system_prompt, "You are concise.");
+}
+
 TEST(ZooAdapterTest, MergeRequestOverridesPassthrough) {
     zoo::GenerationOptions defaults;
     defaults.sampling.temperature = 0.7f;
@@ -276,4 +342,38 @@ TEST(ZooAdapterTest, MergeRequestOverridesStopSequences) {
     auto result = zks::server::merge_request_overrides(defaults, request);
     ASSERT_EQ(result.stop_sequences.size(), 2u);
     EXPECT_EQ(result.stop_sequences[0], "END");
+}
+
+TEST(ZooAdapterTest, MergeRequestOverridesExtendedZooFields) {
+    zoo::GenerationOptions defaults;
+    defaults.record_tool_trace = false;
+    defaults.sampling.repeat_last_n = 64;
+
+    zks::server::ChatCompletionRequest request;
+    request.model = "m";
+    request.repeat_last_n = 128;
+    request.record_tool_trace = true;
+
+    auto result = zks::server::merge_request_overrides(defaults, request);
+    EXPECT_EQ(result.sampling.repeat_last_n, 128);
+    EXPECT_TRUE(result.record_tool_trace);
+}
+
+TEST(ApiTest, ExtractionResponse) {
+    zks::server::ExtractionResult response;
+    response.text = R"({"name":"Alice"})";
+    response.data = nlohmann::json{{"name", "Alice"}};
+    response.usage.total_tokens = 8;
+    response.metrics.latency_ms = std::chrono::milliseconds{55};
+
+    auto http_response =
+        zks::server::make_extraction_response("extract-1", 1234567890, "local-model", response);
+    const auto json = parse_body(http_response);
+    EXPECT_EQ(http_response->getStatusCode(), drogon::k200OK);
+    EXPECT_EQ(json.at("id"), "extract-1");
+    EXPECT_EQ(json.at("object"), "extraction");
+    EXPECT_EQ(json.at("model"), "local-model");
+    EXPECT_EQ(json.at("text"), R"({"name":"Alice"})");
+    EXPECT_EQ(json.at("data").at("name"), "Alice");
+    EXPECT_EQ(json.at("usage").at("total_tokens"), 8);
 }

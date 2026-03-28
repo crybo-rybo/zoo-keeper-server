@@ -61,4 +61,38 @@ CompletionHandle make_completion_handle(std::uint64_t id,
     return CompletionHandle{id, std::move(s)};
 }
 
+std::future_status ExtractionHandle::wait_for(std::chrono::milliseconds timeout) const {
+    if (!state) {
+        return std::future_status::ready;
+    }
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (state->consumed) {
+        return std::future_status::ready;
+    }
+    return state->future.wait_for(timeout);
+}
+
+RuntimeResult<ExtractionResult> ExtractionHandle::get() {
+    if (!state) {
+        return std::unexpected(
+            RuntimeError{RuntimeErrorCode::Unknown, "Extraction handle is not ready"});
+    }
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (state->consumed) {
+        return std::unexpected(RuntimeError{
+            RuntimeErrorCode::Unknown,
+            "Extraction result was already consumed",
+        });
+    }
+    state->consumed = true;
+    return state->future.get();
+}
+
+ExtractionHandle make_extraction_handle(std::uint64_t id,
+                                        std::future<RuntimeResult<ExtractionResult>> future) {
+    auto s = std::make_shared<ExtractionState>();
+    s->future = std::move(future);
+    return ExtractionHandle{id, std::move(s)};
+}
+
 } // namespace zks::server

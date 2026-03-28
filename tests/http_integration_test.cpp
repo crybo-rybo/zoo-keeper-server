@@ -217,6 +217,156 @@ TEST_F(HttpIntegrationTest, MetricsReturns200WithAllFields) {
     }
 }
 
+TEST_F(HttpIntegrationTest, ExtractionEndpointReturnsStructuredBody) {
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/v1/extractions");
+    req->setMethod(drogon::Post);
+    req->addHeader("Authorization", "Bearer test-secret");
+    req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    nlohmann::json body = {{"model", "integration-test-model"},
+                           {"schema",
+                            {{"type", "object"},
+                             {"properties", {{"name", {{"type", "string"}}}}},
+                             {"required", {"name"}}}},
+                           {"messages", {{{"role", "user"}, {"content", "Alice"}}}}};
+    req->setBody(body.dump());
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_EQ(resp->getStatusCode(), drogon::k200OK);
+
+    auto json = nlohmann::json::parse(std::string(resp->body()), nullptr, false);
+    ASSERT_FALSE(json.is_discarded());
+    EXPECT_EQ(json.at("object"), "extraction");
+    EXPECT_TRUE(json.contains("data"));
+}
+
+TEST_F(HttpIntegrationTest, CancelEndpointAcceptsActiveRequestId) {
+    const std::string request_id = "req-cancel-me";
+    chat_service()->set_cancelable_request_id(request_id);
+
+    auto cancel_req = drogon::HttpRequest::newHttpRequest();
+    cancel_req->setPath("/v1/requests/" + request_id + "/cancel");
+    cancel_req->setMethod(drogon::Post);
+    cancel_req->addHeader("Authorization", "Bearer test-secret");
+    auto [cancel_status, cancel_resp] = client()->sendRequest(cancel_req, 5.0);
+    ASSERT_EQ(cancel_status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(cancel_resp);
+    EXPECT_EQ(cancel_resp->getStatusCode(), drogon::k202Accepted);
+}
+
+TEST_F(HttpIntegrationTest, RuntimeEndpointReturnsConfigurationSnapshot) {
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath("/v1/runtime");
+    req->setMethod(drogon::Get);
+    req->addHeader("Authorization", "Bearer test-secret");
+    auto [status, resp] = client()->sendRequest(req, 5.0);
+    ASSERT_EQ(status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp);
+    EXPECT_EQ(resp->getStatusCode(), drogon::k200OK);
+
+    auto json = nlohmann::json::parse(std::string(resp->body()), nullptr, false);
+    ASSERT_FALSE(json.is_discarded());
+    EXPECT_EQ(json.at("model_id"), "integration-test-model");
+    EXPECT_TRUE(json.contains("model_config"));
+    EXPECT_TRUE(json.contains("agent_config"));
+    EXPECT_TRUE(json.contains("default_generation"));
+}
+
+TEST_F(HttpIntegrationTest, AgentHistoryEndpointsReturnSnapshots) {
+    auto replace_req = drogon::HttpRequest::newHttpRequest();
+    replace_req->setPath("/v1/agent/history");
+    replace_req->setMethod(drogon::Put);
+    replace_req->addHeader("Authorization", "Bearer test-secret");
+    replace_req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    replace_req->setBody(
+        R"json({"messages":[{"role":"system","content":"Base"},{"role":"user","content":"Hello"}]})json");
+    auto [replace_status, replace_resp] = client()->sendRequest(replace_req, 5.0);
+    ASSERT_EQ(replace_status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(replace_resp);
+    EXPECT_EQ(replace_resp->getStatusCode(), drogon::k200OK);
+
+    auto replace_json = nlohmann::json::parse(std::string(replace_resp->body()), nullptr, false);
+    ASSERT_FALSE(replace_json.is_discarded());
+    ASSERT_TRUE(replace_json.contains("messages"));
+    ASSERT_EQ(replace_json.at("messages").size(), 2u);
+    EXPECT_EQ(replace_json.at("messages")[0].at("role"), "system");
+    EXPECT_EQ(replace_json.at("messages")[1].at("content"), "Hello");
+    EXPECT_TRUE(replace_json.contains("estimated_tokens"));
+
+    auto get_req = drogon::HttpRequest::newHttpRequest();
+    get_req->setPath("/v1/agent/history");
+    get_req->setMethod(drogon::Get);
+    get_req->addHeader("Authorization", "Bearer test-secret");
+    auto [get_status, get_resp] = client()->sendRequest(get_req, 5.0);
+    ASSERT_EQ(get_status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(get_resp);
+    EXPECT_EQ(get_resp->getStatusCode(), drogon::k200OK);
+
+    auto get_json = nlohmann::json::parse(std::string(get_resp->body()), nullptr, false);
+    ASSERT_FALSE(get_json.is_discarded());
+    ASSERT_EQ(get_json.at("messages").size(), 2u);
+    EXPECT_EQ(get_json.at("messages")[0].at("content"), "Base");
+}
+
+TEST_F(HttpIntegrationTest, AgentHistorySwapReturnsPreviousSnapshot) {
+    auto seed_req = drogon::HttpRequest::newHttpRequest();
+    seed_req->setPath("/v1/agent/history");
+    seed_req->setMethod(drogon::Put);
+    seed_req->addHeader("Authorization", "Bearer test-secret");
+    seed_req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    seed_req->setBody(R"json({"messages":[{"role":"user","content":"First"}]})json");
+    auto [seed_status, seed_resp] = client()->sendRequest(seed_req, 5.0);
+    ASSERT_EQ(seed_status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(seed_resp);
+
+    auto swap_req = drogon::HttpRequest::newHttpRequest();
+    swap_req->setPath("/v1/agent/history:swap");
+    swap_req->setMethod(drogon::Post);
+    swap_req->addHeader("Authorization", "Bearer test-secret");
+    swap_req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    swap_req->setBody(R"json({"messages":[{"role":"assistant","content":"Second"}]})json");
+    auto [swap_status, swap_resp] = client()->sendRequest(swap_req, 5.0);
+    ASSERT_EQ(swap_status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(swap_resp);
+    EXPECT_EQ(swap_resp->getStatusCode(), drogon::k200OK);
+
+    auto swap_json = nlohmann::json::parse(std::string(swap_resp->body()), nullptr, false);
+    ASSERT_FALSE(swap_json.is_discarded());
+    ASSERT_EQ(swap_json.at("messages").size(), 1u);
+    EXPECT_EQ(swap_json.at("messages")[0].at("content"), "First");
+}
+
+TEST_F(HttpIntegrationTest, SystemPromptEndpointsReturnCurrentValue) {
+    auto put_req = drogon::HttpRequest::newHttpRequest();
+    put_req->setPath("/v1/agent/system-prompt");
+    put_req->setMethod(drogon::Put);
+    put_req->addHeader("Authorization", "Bearer test-secret");
+    put_req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    put_req->setBody(R"json({"system_prompt":"Stay concise."})json");
+    auto [put_status, put_resp] = client()->sendRequest(put_req, 5.0);
+    ASSERT_EQ(put_status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(put_resp);
+    EXPECT_EQ(put_resp->getStatusCode(), drogon::k200OK);
+
+    auto put_json = nlohmann::json::parse(std::string(put_resp->body()), nullptr, false);
+    ASSERT_FALSE(put_json.is_discarded());
+    EXPECT_EQ(put_json.at("system_prompt"), "Stay concise.");
+
+    auto get_req = drogon::HttpRequest::newHttpRequest();
+    get_req->setPath("/v1/agent/system-prompt");
+    get_req->setMethod(drogon::Get);
+    get_req->addHeader("Authorization", "Bearer test-secret");
+    auto [get_status, get_resp] = client()->sendRequest(get_req, 5.0);
+    ASSERT_EQ(get_status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(get_resp);
+    EXPECT_EQ(get_resp->getStatusCode(), drogon::k200OK);
+
+    auto get_json = nlohmann::json::parse(std::string(get_resp->body()), nullptr, false);
+    ASSERT_FALSE(get_json.is_discarded());
+    EXPECT_EQ(get_json.at("system_prompt"), "Stay concise.");
+}
+
 TEST_F(HttpIntegrationTest, QueueFullIncrementsMetric) {
     auto before = read_metric(client(), "requests_queue_rejected_total");
     ASSERT_TRUE(before.has_value());

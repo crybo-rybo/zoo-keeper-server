@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 /// Configurable behavior modes for `FakeChatService::start_completion()`.
@@ -77,6 +78,18 @@ class FakeChatService final : public zks::server::ChatService {
 
     [[nodiscard]] zks::server::SessionHealth session_health() const noexcept override {
         return {};
+    }
+
+    [[nodiscard]] const zoo::ModelConfig& model_config() const noexcept override {
+        return model_config_;
+    }
+
+    [[nodiscard]] const zoo::AgentConfig& agent_config() const noexcept override {
+        return agent_config_;
+    }
+
+    [[nodiscard]] const zoo::GenerationOptions& default_generation() const noexcept override {
+        return default_generation_;
     }
 
     ~FakeChatService() {
@@ -167,6 +180,44 @@ class FakeChatService final : public zks::server::ChatService {
         return std::unexpected(zks::server::server_error("unknown fake mode"));
     }
 
+    zks::server::ApiResult<zks::server::PendingChatCompletion>
+    start_agent_chat(const zks::server::AgentChatRequest& request,
+                     std::optional<zks::server::TokenCallback> callback = std::nullopt) override {
+        zks::server::ChatCompletionRequest completion_request;
+        completion_request.model = request.model;
+        completion_request.messages = {request.message};
+        return start_completion(completion_request, std::move(callback));
+    }
+
+    zks::server::ApiResult<zks::server::PendingExtraction>
+    start_extraction(const zks::server::ExtractionRequest& request,
+                     std::optional<zks::server::TokenCallback> callback = std::nullopt) override {
+        if (callback.has_value()) {
+            (*callback)(extraction_response_.text);
+        }
+
+        std::promise<zks::server::RuntimeResult<zks::server::ExtractionResult>> promise;
+        auto future = promise.get_future();
+        promise.set_value(extraction_response_);
+
+        zks::server::PendingExtraction pending;
+        pending.id = "extract-fake-1";
+        pending.created = 0;
+        pending.model = request.model;
+        pending.handle = zks::server::make_extraction_handle(3, std::move(future));
+        pending.cancel = [] {};
+        return pending;
+    }
+
+    zks::server::ApiResult<void> cancel_request(std::string_view request_id) override {
+        std::lock_guard<std::mutex> lock(cancel_mutex_);
+        if (cancelable_request_ids_.erase(std::string(request_id)) == 0u) {
+            return std::unexpected(
+                zks::server::not_found_error("Unknown request", "request_not_found"));
+        }
+        return {};
+    }
+
     zks::server::ApiResult<zks::server::SessionSummary>
     create_session(const zks::server::SessionCreateRequest&) override {
         return std::unexpected(zks::server::server_error("not implemented in fake"));
@@ -178,6 +229,45 @@ class FakeChatService final : public zks::server::ChatService {
 
     zks::server::ApiResult<void> delete_session(std::string_view) override {
         return std::unexpected(zks::server::server_error("not implemented in fake"));
+    }
+
+    zks::server::ApiResult<zks::server::AgentHistorySnapshot> get_agent_history() override {
+        return agent_history_;
+    }
+
+    zks::server::ApiResult<void> clear_agent_history() override {
+        agent_history_.messages.clear();
+        agent_history_.estimated_tokens = 0;
+        agent_history_.context_exceeded = false;
+        return {};
+    }
+
+    zks::server::ApiResult<zks::server::AgentHistorySnapshot>
+    replace_agent_history(const zks::server::AgentHistoryRequest& request) override {
+        agent_history_.messages = request.messages;
+        return agent_history_;
+    }
+
+    zks::server::ApiResult<zks::server::AgentHistorySnapshot>
+    swap_agent_history(const zks::server::AgentHistoryRequest& request) override {
+        auto previous = agent_history_;
+        agent_history_.messages = request.messages;
+        return previous;
+    }
+
+    zks::server::ApiResult<zks::server::AgentHistorySnapshot>
+    append_agent_history_message(const zks::server::AgentHistoryMessageRequest& request) override {
+        agent_history_.messages.push_back(request);
+        return agent_history_;
+    }
+
+    zks::server::ApiResult<std::string> get_system_prompt() override {
+        return system_prompt_;
+    }
+
+    zks::server::ApiResult<std::string> set_system_prompt(std::string prompt) override {
+        system_prompt_ = std::move(prompt);
+        return system_prompt_;
     }
 
     void stop() override {
@@ -209,15 +299,35 @@ class FakeChatService final : public zks::server::ChatService {
         response_ = std::move(response);
     }
 
+    void set_extraction_response(zks::server::ExtractionResult response) {
+        extraction_response_ = std::move(response);
+    }
+
+    void set_cancelable_request_id(std::string request_id) {
+        std::lock_guard<std::mutex> lock(cancel_mutex_);
+        cancelable_request_ids_.insert(std::move(request_id));
+    }
+
     std::shared_ptr<Latch> finish_latch() const noexcept {
         return finish_latch_;
     }
 
   private:
     std::string model_id_ = "fake-model";
+    zoo::ModelConfig model_config_{.model_path = "/tmp/fake.gguf", .context_size = 2048};
+    zoo::AgentConfig agent_config_{};
+    zoo::GenerationOptions default_generation_{};
     std::vector<zks::server::ToolDefinition> tools_;
     zks::server::CompletionResult response_;
+    zks::server::ExtractionResult extraction_response_{
+        .text = R"({"name":"Alice"})",
+        .data = nlohmann::json{{"name", "Alice"}},
+    };
+    zks::server::AgentHistorySnapshot agent_history_{};
+    std::string system_prompt_ = "fake-system-prompt";
     mutable std::mutex response_mutex_;
+    mutable std::mutex cancel_mutex_;
+    std::unordered_set<std::string> cancelable_request_ids_;
     std::atomic<int> stop_calls_{0};
     std::atomic<bool> ready_{true};
     std::atomic<FakeCompletionMode> mode_{FakeCompletionMode::ServerError};

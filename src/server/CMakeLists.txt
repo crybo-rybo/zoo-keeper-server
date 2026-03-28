@@ -13,6 +13,7 @@ add_library(zks_server_core
     health.cpp
     http_server.cpp
     metrics.cpp
+    route_utils.cpp
     runtime.cpp
     session_manager.cpp
     streaming.cpp

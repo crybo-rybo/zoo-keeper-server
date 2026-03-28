@@ -17,7 +17,6 @@
 #include <drogon/drogon.h>
 
 namespace zks::server {
-namespace {
 
 void release_completion(const PendingChatCompletion& pending) {
     if (pending.lease) {
@@ -32,6 +31,8 @@ void finalize_completion(const PendingChatCompletion& pending,
     }
     release_completion(pending);
 }
+
+namespace {
 
 void log_request_start(const PendingChatCompletion& pending, const ChatCompletionRequest& request) {
     std::clog << "[request] event=start completion_id=" << pending.id << " model=" << pending.model
@@ -261,29 +262,6 @@ drogon::HttpResponsePtr make_stream_response(const std::shared_ptr<StreamingSess
     return response;
 }
 
-void increment_runtime_error_metrics(ServerMetrics& metrics, const RuntimeError& error) {
-    if (error.code == RuntimeErrorCode::RequestCancelled) {
-        metrics.increment_cancelled();
-    } else if (error.code == RuntimeErrorCode::QueueFull) {
-        metrics.increment_queue_rejected();
-    }
-}
-
-void increment_tool_metrics(ServerMetrics& metrics, const CompletionResult& response) {
-    for (const auto& invocation : response.tool_invocations) {
-        metrics.increment_tool_invocations();
-        if (invocation.status == ToolInvocationStatus::Succeeded) {
-            continue;
-        }
-
-        metrics.increment_tool_failures();
-        if (invocation.error.has_value() &&
-            invocation.error->context == std::optional<std::string>{"timeout"}) {
-            metrics.increment_tool_timeouts();
-        }
-    }
-}
-
 void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
                                  const ChatCompletionRequest& request,
                                  std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
@@ -307,7 +285,7 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
             callback(make_error_response(map_runtime_error_to_api_error(result.error())));
             return;
         }
-        increment_tool_metrics(runtime->metrics(), *result);
+        increment_tool_metrics(runtime->metrics(), result->tool_invocations);
         finalize_completion(*pending, result);
         callback(
             make_chat_completion_response(pending->id, pending->created, pending->model, *result));
@@ -333,7 +311,7 @@ void start_non_stream_completion(const std::shared_ptr<ServerRuntime>& runtime,
                 return;
             }
 
-            increment_tool_metrics(runtime->metrics(), *result);
+            increment_tool_metrics(runtime->metrics(), result->tool_invocations);
             finalize_completion(pending, result);
             callback(
                 make_chat_completion_response(pending.id, pending.created, pending.model, *result));
@@ -377,7 +355,7 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
             return;
         }
 
-        increment_tool_metrics(runtime->metrics(), *result);
+        increment_tool_metrics(runtime->metrics(), result->tool_invocations);
         session->finish_success(*result);
         finalize_completion(*pending, result);
         callback(make_stream_response(session));
@@ -419,7 +397,7 @@ void start_stream_completion(const drogon::HttpRequestPtr& request,
                 return;
             }
 
-            increment_tool_metrics(runtime->metrics(), *result);
+            increment_tool_metrics(runtime->metrics(), result->tool_invocations);
             session->finish_success(*result);
             finalize_completion(pending, result);
         });

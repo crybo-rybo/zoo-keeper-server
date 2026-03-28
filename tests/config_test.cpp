@@ -373,3 +373,27 @@ TEST(ConfigTest, UnknownZooKeyRejected) {
     EXPECT_NE(config.error().find("Unknown"), std::string::npos);
     EXPECT_NE(config.error().find("bogus_key"), std::string::npos);
 }
+
+TEST(ConfigTest, ZooBlockAcceptsExtendedGenerationFields) {
+    TempDir tmp;
+    auto file = tmp.path / "extended_generation.json";
+    ASSERT_TRUE(write_text_file(file,
+                                R"json({
+  "model_id": "demo-model",
+  "zoo": {
+    "model_path": "/tmp/demo.gguf",
+    "max_tokens": 64,
+    "repeat_last_n": 96,
+    "stop_sequences": ["END", "STOP"],
+    "record_tool_trace": true
+  }
+})json"));
+
+    auto config = zks::server::load_config(file);
+    ASSERT_TRUE(config.has_value());
+    EXPECT_EQ(config->default_generation.max_tokens, 64);
+    EXPECT_EQ(config->default_generation.sampling.repeat_last_n, 96);
+    ASSERT_EQ(config->default_generation.stop_sequences.size(), 2u);
+    EXPECT_EQ(config->default_generation.stop_sequences[0], "END");
+    EXPECT_TRUE(config->default_generation.record_tool_trace);
+}

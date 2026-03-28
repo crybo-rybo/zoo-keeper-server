@@ -162,9 +162,42 @@ struct ChatCompletionRequest {
     std::optional<float> top_p;
     std::optional<int> top_k;
     std::optional<float> repeat_penalty;
+    std::optional<int> repeat_last_n;
     std::optional<int> max_tokens;
     std::optional<int> seed;
     std::optional<std::vector<std::string>> stop;
+    std::optional<bool> record_tool_trace;
+};
+
+struct ExtractionRequest {
+    std::string model;
+    nlohmann::json schema;
+    std::vector<ChatMessage> messages;
+    bool stream = false;
+    std::optional<std::string> session_id;
+    std::optional<float> temperature;
+    std::optional<float> top_p;
+    std::optional<int> top_k;
+    std::optional<float> repeat_penalty;
+    std::optional<int> repeat_last_n;
+    std::optional<int> max_tokens;
+    std::optional<int> seed;
+    std::optional<std::vector<std::string>> stop;
+    std::optional<bool> record_tool_trace;
+};
+
+struct AgentChatRequest {
+    std::string model;
+    ChatMessage message;
+    std::optional<float> temperature;
+    std::optional<float> top_p;
+    std::optional<int> top_k;
+    std::optional<float> repeat_penalty;
+    std::optional<int> repeat_last_n;
+    std::optional<int> max_tokens;
+    std::optional<int> seed;
+    std::optional<std::vector<std::string>> stop;
+    std::optional<bool> record_tool_trace;
 };
 
 struct SessionCreateRequest {
@@ -185,6 +218,33 @@ struct SessionHealth {
     size_t active = 0;
     size_t max_sessions = 0;
     std::uint32_t idle_ttl_seconds = 0;
+};
+
+struct AgentHistoryRequest {
+    std::vector<ChatMessage> messages;
+};
+
+using AgentHistoryMessageRequest = ChatMessage;
+
+struct SystemPromptRequest {
+    std::string system_prompt;
+};
+
+struct AgentHistorySnapshot {
+    std::vector<ChatMessage> messages;
+    int estimated_tokens = 0;
+    int context_size = 0;
+    bool context_exceeded = false;
+};
+
+struct ExtractionResult {
+    std::string text;
+    nlohmann::json data;
+    CompletionUsage usage;
+    CompletionMetrics metrics;
+    std::vector<ToolInvocationRecord> tool_invocations;
+
+    bool operator==(const ExtractionResult& other) const = default;
 };
 
 // --- Completion lifecycle ---
@@ -219,6 +279,35 @@ struct PendingChatCompletion {
     std::string model;
     CompletionHandle handle;
     CompletionObserver on_result;
+    std::function<void()> cancel;
+    std::shared_ptr<CompletionLease> lease;
+};
+
+using ExtractionObserver = std::function<void(const RuntimeResult<ExtractionResult>&)>;
+
+struct ExtractionState {
+    mutable std::mutex mutex;
+    mutable std::future<RuntimeResult<ExtractionResult>> future;
+    bool consumed = false;
+};
+
+struct ExtractionHandle {
+    std::uint64_t id = 0;
+    std::shared_ptr<ExtractionState> state;
+
+    [[nodiscard]] std::future_status wait_for(std::chrono::milliseconds timeout) const;
+    RuntimeResult<ExtractionResult> get();
+};
+
+[[nodiscard]] ExtractionHandle
+make_extraction_handle(std::uint64_t id, std::future<RuntimeResult<ExtractionResult>> future);
+
+struct PendingExtraction {
+    std::string id;
+    std::int64_t created = 0;
+    std::string model;
+    ExtractionHandle handle;
+    ExtractionObserver on_result;
     std::function<void()> cancel;
     std::shared_ptr<CompletionLease> lease;
 };

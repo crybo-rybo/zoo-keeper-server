@@ -225,6 +225,11 @@ ApiResult<void> SessionStore::delete_session(std::string_view session_id) {
     return {};
 }
 
+void SessionStore::set_base_system_prompt(std::string base_system_prompt) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    base_system_prompt_ = std::move(base_system_prompt);
+}
+
 ApiResult<BeginRequestResult> SessionStore::begin_request(const ChatCompletionRequest& request,
                                                           std::uint64_t request_id) {
     if (!enabled()) {
@@ -308,6 +313,34 @@ void SessionStore::commit_result(std::string_view session_id, std::uint64_t requ
     if (!session->closed && result) {
         session->history.push_back(user_message);
         session->history.push_back(ChatMessage::assistant(result->text));
+        trim_history_to_fit(session->history, max_history_messages_);
+    }
+
+    session->active_request.reset();
+    touch_session(*session);
+}
+
+void SessionStore::commit_response_text(std::string_view session_id, std::uint64_t request_id,
+                                        const ChatMessage& user_message,
+                                        const RuntimeResult<std::string>& result) {
+    std::shared_ptr<SessionState> session;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = sessions_.find(session_id);
+        if (it == sessions_.end()) {
+            return;
+        }
+        session = it->second;
+    }
+
+    std::lock_guard<std::mutex> session_lock(session->mutex);
+    if (!session->active_request.has_value() || *session->active_request != request_id) {
+        return;
+    }
+
+    if (!session->closed && result) {
+        session->history.push_back(user_message);
+        session->history.push_back(ChatMessage::assistant(*result));
         trim_history_to_fit(session->history, max_history_messages_);
     }
 

@@ -93,6 +93,89 @@ ApiResult<ChatMessage> parse_message(const nlohmann::json& json, std::vector<Cha
     return message;
 }
 
+ApiResult<ChatMessage> parse_single_message_field(const nlohmann::json& json, const char* field,
+                                                  const char* context) {
+    if (!json.contains(field) || !json.at(field).is_object()) {
+        return std::unexpected(
+            invalid_request_error(std::string(field) + " must be an object", context));
+    }
+    std::vector<ChatMessage> seed;
+    return parse_message(json.at(field), seed);
+}
+
+template <typename Request>
+ApiResult<void> parse_generation_overrides(const nlohmann::json& json, Request& request) {
+    if (auto it = json.find("temperature"); it != json.end()) {
+        if (!it->is_number()) {
+            return std::unexpected(
+                invalid_request_error("temperature must be a number", "temperature"));
+        }
+        request.temperature = it->get<float>();
+    }
+    if (auto it = json.find("top_p"); it != json.end()) {
+        if (!it->is_number()) {
+            return std::unexpected(invalid_request_error("top_p must be a number", "top_p"));
+        }
+        request.top_p = it->get<float>();
+    }
+    if (auto it = json.find("top_k"); it != json.end()) {
+        if (!it->is_number_integer()) {
+            return std::unexpected(invalid_request_error("top_k must be an integer", "top_k"));
+        }
+        request.top_k = it->get<int>();
+    }
+    if (auto it = json.find("repeat_penalty"); it != json.end()) {
+        if (!it->is_number()) {
+            return std::unexpected(
+                invalid_request_error("repeat_penalty must be a number", "repeat_penalty"));
+        }
+        request.repeat_penalty = it->get<float>();
+    }
+    if (auto it = json.find("repeat_last_n"); it != json.end()) {
+        if (!it->is_number_integer()) {
+            return std::unexpected(
+                invalid_request_error("repeat_last_n must be an integer", "repeat_last_n"));
+        }
+        request.repeat_last_n = it->get<int>();
+    }
+    if (auto it = json.find("max_tokens"); it != json.end()) {
+        if (!it->is_number_integer()) {
+            return std::unexpected(
+                invalid_request_error("max_tokens must be an integer", "max_tokens"));
+        }
+        request.max_tokens = it->get<int>();
+    }
+    if (auto it = json.find("seed"); it != json.end()) {
+        if (!it->is_number_integer()) {
+            return std::unexpected(invalid_request_error("seed must be an integer", "seed"));
+        }
+        request.seed = it->get<int>();
+    }
+    if (auto it = json.find("stop"); it != json.end()) {
+        if (!it->is_array()) {
+            return std::unexpected(
+                invalid_request_error("stop must be an array of strings", "stop"));
+        }
+        std::vector<std::string> stop_sequences;
+        for (const auto& entry : *it) {
+            if (!entry.is_string()) {
+                return std::unexpected(
+                    invalid_request_error("each stop entry must be a string", "stop"));
+            }
+            stop_sequences.push_back(entry.get<std::string>());
+        }
+        request.stop = std::move(stop_sequences);
+    }
+    if (auto it = json.find("record_tool_trace"); it != json.end()) {
+        if (!it->is_boolean()) {
+            return std::unexpected(
+                invalid_request_error("record_tool_trace must be a boolean", "record_tool_trace"));
+        }
+        request.record_tool_trace = it->get<bool>();
+    }
+    return {};
+}
+
 nlohmann::json make_tool_schema(const ToolDefinition& metadata) {
     return nlohmann::json{{"type", "function"},
                           {"function",
@@ -160,6 +243,31 @@ nlohmann::json make_session_body(const SessionSummary& summary) {
 
 } // namespace
 
+nlohmann::json make_extraction_body(std::string_view extraction_id, std::int64_t created,
+                                    std::string_view model_id, const ExtractionResult& response) {
+    nlohmann::json tool_invocations = nlohmann::json::array();
+    for (const auto& inv : response.tool_invocations) {
+        tool_invocations.push_back(make_tool_invocation_json(inv));
+    }
+
+    return nlohmann::json{
+        {"id", extraction_id},
+        {"object", "extraction"},
+        {"created", created},
+        {"model", model_id},
+        {"text", response.text},
+        {"data", response.data},
+        {"usage",
+         {{"prompt_tokens", response.usage.prompt_tokens},
+          {"completion_tokens", response.usage.completion_tokens},
+          {"total_tokens", response.usage.total_tokens}}},
+        {"zoo_metrics",
+         {{"latency_ms", response.metrics.latency_ms.count()},
+          {"time_to_first_token_ms", response.metrics.time_to_first_token_ms.count()},
+          {"tokens_per_second", response.metrics.tokens_per_second}}},
+        {"tool_invocations", std::move(tool_invocations)}};
+}
+
 ApiResult<ChatCompletionRequest> parse_chat_completion_request(std::string_view body) {
     nlohmann::json json;
     try {
@@ -169,9 +277,10 @@ ApiResult<ChatCompletionRequest> parse_chat_completion_request(std::string_view 
             invalid_request_error(std::string("Invalid JSON body: ") + error.what(), "body"));
     }
 
-    static constexpr std::array<const char*, 11> kAllowedKeys = {
-        "model", "messages",       "stream",     "session_id", "temperature", "top_p",
-        "top_k", "repeat_penalty", "max_tokens", "seed",       "stop"};
+    static constexpr std::array<const char*, 13> kAllowedKeys = {
+        "model", "messages", "stream",           "session_id",    "temperature",
+        "top_p", "top_k",    "repeat_penalty",   "repeat_last_n", "max_tokens",
+        "seed",  "stop",     "record_tool_trace"};
     if (auto unknown_keys = reject_api_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
         return std::unexpected(unknown_keys.error());
     }
@@ -207,60 +316,8 @@ ApiResult<ChatCompletionRequest> parse_chat_completion_request(std::string_view 
         }
     }
 
-    // Per-request sampling overrides.
-    if (auto it = json.find("temperature"); it != json.end()) {
-        if (!it->is_number()) {
-            return std::unexpected(
-                invalid_request_error("temperature must be a number", "temperature"));
-        }
-        request.temperature = it->get<float>();
-    }
-    if (auto it = json.find("top_p"); it != json.end()) {
-        if (!it->is_number()) {
-            return std::unexpected(invalid_request_error("top_p must be a number", "top_p"));
-        }
-        request.top_p = it->get<float>();
-    }
-    if (auto it = json.find("top_k"); it != json.end()) {
-        if (!it->is_number_integer()) {
-            return std::unexpected(invalid_request_error("top_k must be an integer", "top_k"));
-        }
-        request.top_k = it->get<int>();
-    }
-    if (auto it = json.find("repeat_penalty"); it != json.end()) {
-        if (!it->is_number()) {
-            return std::unexpected(
-                invalid_request_error("repeat_penalty must be a number", "repeat_penalty"));
-        }
-        request.repeat_penalty = it->get<float>();
-    }
-    if (auto it = json.find("max_tokens"); it != json.end()) {
-        if (!it->is_number_integer()) {
-            return std::unexpected(
-                invalid_request_error("max_tokens must be an integer", "max_tokens"));
-        }
-        request.max_tokens = it->get<int>();
-    }
-    if (auto it = json.find("seed"); it != json.end()) {
-        if (!it->is_number_integer()) {
-            return std::unexpected(invalid_request_error("seed must be an integer", "seed"));
-        }
-        request.seed = it->get<int>();
-    }
-    if (auto it = json.find("stop"); it != json.end()) {
-        if (!it->is_array()) {
-            return std::unexpected(
-                invalid_request_error("stop must be an array of strings", "stop"));
-        }
-        std::vector<std::string> stop_sequences;
-        for (const auto& entry : *it) {
-            if (!entry.is_string()) {
-                return std::unexpected(
-                    invalid_request_error("each stop entry must be a string", "stop"));
-            }
-            stop_sequences.push_back(entry.get<std::string>());
-        }
-        request.stop = std::move(stop_sequences);
+    if (auto overrides = parse_generation_overrides(json, request); !overrides) {
+        return std::unexpected(overrides.error());
     }
 
     const auto& messages_json = json.at("messages");
@@ -312,6 +369,177 @@ ApiResult<SessionCreateRequest> parse_session_create_request(std::string_view bo
         request.system_prompt = it->get<std::string>();
     }
 
+    return request;
+}
+
+ApiResult<ExtractionRequest> parse_extraction_request(std::string_view body) {
+    nlohmann::json json;
+    try {
+        json = nlohmann::json::parse(body.begin(), body.end());
+    } catch (const std::exception& error) {
+        return std::unexpected(
+            invalid_request_error(std::string("Invalid JSON body: ") + error.what(), "body"));
+    }
+
+    static constexpr std::array<const char*, 14> kAllowedKeys = {
+        "model",       "schema", "messages", "stream",           "session_id",
+        "temperature", "top_p",  "top_k",    "repeat_penalty",   "repeat_last_n",
+        "max_tokens",  "seed",   "stop",     "record_tool_trace"};
+    if (auto unknown_keys = reject_api_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
+        return std::unexpected(unknown_keys.error());
+    }
+    if (!json.contains("model") || !json.at("model").is_string()) {
+        return std::unexpected(invalid_request_error("model must be a string", "model"));
+    }
+    if (!json.contains("schema") || !json.at("schema").is_object()) {
+        return std::unexpected(invalid_request_error("schema must be an object", "schema"));
+    }
+    if (!json.contains("messages") || !json.at("messages").is_array()) {
+        return std::unexpected(invalid_request_error("messages must be an array", "messages"));
+    }
+
+    ExtractionRequest request;
+    request.model = json.at("model").get<std::string>();
+    request.schema = json.at("schema");
+    if (request.model.empty()) {
+        return std::unexpected(invalid_request_error("model must not be empty", "model"));
+    }
+    if (auto it = json.find("stream"); it != json.end()) {
+        if (!it->is_boolean()) {
+            return std::unexpected(invalid_request_error("stream must be a boolean", "stream"));
+        }
+        request.stream = it->get<bool>();
+    }
+    if (auto it = json.find("session_id"); it != json.end()) {
+        if (!it->is_string()) {
+            return std::unexpected(
+                invalid_request_error("session_id must be a string", "session_id"));
+        }
+        request.session_id = it->get<std::string>();
+        if (request.session_id->empty()) {
+            return std::unexpected(
+                invalid_request_error("session_id must not be empty", "session_id"));
+        }
+    }
+    if (auto overrides = parse_generation_overrides(json, request); !overrides) {
+        return std::unexpected(overrides.error());
+    }
+
+    const auto& messages_json = json.at("messages");
+    if (messages_json.empty()) {
+        return std::unexpected(
+            invalid_request_error("messages must contain at least one item", "messages"));
+    }
+    request.messages.reserve(messages_json.size());
+    for (const auto& item : messages_json) {
+        auto parsed = parse_message(item, request.messages);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+    }
+    return request;
+}
+
+ApiResult<AgentChatRequest> parse_agent_chat_request(std::string_view body) {
+    nlohmann::json json;
+    try {
+        json = nlohmann::json::parse(body.begin(), body.end());
+    } catch (const std::exception& error) {
+        return std::unexpected(
+            invalid_request_error(std::string("Invalid JSON body: ") + error.what(), "body"));
+    }
+
+    static constexpr std::array<const char*, 11> kAllowedKeys = {
+        "model", "message",        "temperature",      "top_p",
+        "top_k", "repeat_penalty", "repeat_last_n",    "max_tokens",
+        "seed",  "stop",           "record_tool_trace"};
+    if (auto unknown_keys = reject_api_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
+        return std::unexpected(unknown_keys.error());
+    }
+    if (!json.contains("model") || !json.at("model").is_string()) {
+        return std::unexpected(invalid_request_error("model must be a string", "model"));
+    }
+
+    AgentChatRequest request;
+    request.model = json.at("model").get<std::string>();
+    if (request.model.empty()) {
+        return std::unexpected(invalid_request_error("model must not be empty", "model"));
+    }
+    auto message = parse_single_message_field(json, "message", "message");
+    if (!message) {
+        return std::unexpected(message.error());
+    }
+    request.message = *message;
+    if (auto overrides = parse_generation_overrides(json, request); !overrides) {
+        return std::unexpected(overrides.error());
+    }
+    return request;
+}
+
+ApiResult<AgentHistoryRequest> parse_agent_history_request(std::string_view body) {
+    nlohmann::json json;
+    try {
+        json = nlohmann::json::parse(body.begin(), body.end());
+    } catch (const std::exception& error) {
+        return std::unexpected(
+            invalid_request_error(std::string("Invalid JSON body: ") + error.what(), "body"));
+    }
+
+    static constexpr std::array<const char*, 1> kAllowedKeys = {"messages"};
+    if (auto unknown_keys = reject_api_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
+        return std::unexpected(unknown_keys.error());
+    }
+    if (!json.contains("messages") || !json.at("messages").is_array()) {
+        return std::unexpected(invalid_request_error("messages must be an array", "messages"));
+    }
+
+    AgentHistoryRequest request;
+    request.messages.reserve(json.at("messages").size());
+    for (const auto& item : json.at("messages")) {
+        auto parsed = parse_message(item, request.messages);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+    }
+    return request;
+}
+
+ApiResult<AgentHistoryMessageRequest> parse_agent_history_message_request(std::string_view body) {
+    nlohmann::json json;
+    try {
+        json = nlohmann::json::parse(body.begin(), body.end());
+    } catch (const std::exception& error) {
+        return std::unexpected(
+            invalid_request_error(std::string("Invalid JSON body: ") + error.what(), "body"));
+    }
+
+    static constexpr std::array<const char*, 1> kAllowedKeys = {"message"};
+    if (auto unknown_keys = reject_api_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
+        return std::unexpected(unknown_keys.error());
+    }
+    return parse_single_message_field(json, "message", "message");
+}
+
+ApiResult<SystemPromptRequest> parse_system_prompt_request(std::string_view body) {
+    nlohmann::json json;
+    try {
+        json = nlohmann::json::parse(body.begin(), body.end());
+    } catch (const std::exception& error) {
+        return std::unexpected(
+            invalid_request_error(std::string("Invalid JSON body: ") + error.what(), "body"));
+    }
+
+    static constexpr std::array<const char*, 1> kAllowedKeys = {"system_prompt"};
+    if (auto unknown_keys = reject_api_unknown_keys(json, "request", kAllowedKeys); !unknown_keys) {
+        return std::unexpected(unknown_keys.error());
+    }
+    if (!json.contains("system_prompt") || !json.at("system_prompt").is_string()) {
+        return std::unexpected(
+            invalid_request_error("system_prompt must be a string", "system_prompt"));
+    }
+
+    SystemPromptRequest request;
+    request.system_prompt = json.at("system_prompt").get<std::string>();
     return request;
 }
 
@@ -367,6 +595,12 @@ drogon::HttpResponsePtr make_chat_completion_response(std::string_view completio
                                                       const CompletionResult& response) {
     return make_json_response(
         make_chat_completion_body(completion_id, created, model_id, response));
+}
+
+drogon::HttpResponsePtr make_extraction_response(std::string_view extraction_id,
+                                                 std::int64_t created, std::string_view model_id,
+                                                 const ExtractionResult& response) {
+    return make_json_response(make_extraction_body(extraction_id, created, model_id, response));
 }
 
 ApiError map_runtime_error_to_api_error(const RuntimeError& error) {

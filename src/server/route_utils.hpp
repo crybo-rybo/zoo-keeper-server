@@ -1,9 +1,11 @@
 #pragma once
 
+#include "server/api_types.hpp"
 #include "server/metrics.hpp"
 
 #include <functional>
 #include <utility>
+#include <vector>
 
 #include <drogon/HttpResponse.h>
 
@@ -22,5 +24,10 @@ with_metrics(ServerMetrics& metrics, std::function<void(const drogon::HttpRespon
         callback(resp);
     };
 }
+
+void increment_runtime_error_metrics(ServerMetrics& metrics, const RuntimeError& error);
+
+void increment_tool_metrics(ServerMetrics& metrics,
+                            const std::vector<ToolInvocationRecord>& tool_invocations);
 
 } // namespace zks::server
