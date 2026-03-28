@@ -560,6 +560,7 @@ h3 {
 
 .interaction-shell--chat {
   align-content: start;
+  gap: 14px;
 }
 
 .field {
@@ -647,8 +648,8 @@ textarea {
 }
 
 .transcript-shell--chat .transcript {
-  height: 420px;
-  max-height: 420px;
+  height: 320px;
+  max-height: 320px;
 }
 
 .bubble {
@@ -689,14 +690,14 @@ pre {
 
 .chat-composer {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   padding-top: 4px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .chat-composer textarea {
-  min-height: 124px;
-  max-height: 124px;
+  min-height: 96px;
+  max-height: 96px;
   resize: none;
 }
 
@@ -977,13 +978,13 @@ body.is-loaded .chapter[data-active="true"] .interaction-shell {
   }
 
   .transcript-shell--chat .transcript {
-    height: 340px;
-    max-height: 340px;
+    height: 300px;
+    max-height: 300px;
   }
 
   .chat-composer textarea {
-    min-height: 110px;
-    max-height: 110px;
+    min-height: 88px;
+    max-height: 88px;
   }
 
   .chapter-nav {
