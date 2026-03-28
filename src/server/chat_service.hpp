@@ -167,6 +167,8 @@ class ZooChatService final : public ChatService {
     void register_public_request(std::string request_id, std::function<void()> cancel);
     void unregister_public_request(std::string_view request_id);
     static int estimate_history_tokens(const zoo::HistorySnapshot& history) noexcept;
+    std::string update_system_prompt_state(std::string prompt);
+    void reset_agent_history_to_system_prompt();
 
     std::string model_id_;
     zoo::ModelConfig model_config_;
@@ -189,6 +191,11 @@ class ZooChatService final : public ChatService {
     mutable std::mutex agent_history_mutex_;
     zoo::HistorySnapshot agent_history_;
     mutable std::mutex system_prompt_mutex_;
+
+    friend class ZooChatServiceTest;
+    friend class ZooChatServiceTest_UpdateSystemPromptStateKeepsRetainedHistoryAligned_Test;
+    friend class ZooChatServiceTest_ResetAgentHistoryPreservesCurrentSystemPrompt_Test;
+    friend class ZooChatServiceTest_ConcurrentPromptUpdatesAndHistoryResetsStayConsistent_Test;
 };
 
 } // namespace zks::server

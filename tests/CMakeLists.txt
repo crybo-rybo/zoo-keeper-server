@@ -32,6 +32,7 @@ zks_add_test(auth_test SOURCES auth_test.cpp)
 zks_add_test(metrics_test SOURCES metrics_test.cpp)
 zks_add_test(http_integration_test SOURCES http_integration_test.cpp)
 set_tests_properties(http_integration_test PROPERTIES TIMEOUT 30)
+zks_add_test(chat_service_test SOURCES chat_service_test.cpp)
 zks_add_test(streaming_test SOURCES streaming_test.cpp)
 zks_add_test(executor_test SOURCES executor_test.cpp)
 zks_add_test(command_tools_test

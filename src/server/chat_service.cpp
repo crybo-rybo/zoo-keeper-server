@@ -517,16 +517,7 @@ ApiResult<void> ZooChatService::clear_agent_history() {
         return std::unexpected(
             service_unavailable_error("Server runtime is not ready", "agent_not_ready"));
     }
-    std::string local_prompt;
-    {
-        std::lock_guard<std::mutex> lock(system_prompt_mutex_);
-        local_prompt = request_system_prompt_;
-    }
-    std::lock_guard<std::mutex> lock(agent_history_mutex_);
-    agent_history_.messages.clear();
-    if (!local_prompt.empty()) {
-        agent_history_.messages.push_back(ChatMessage::system(local_prompt));
-    }
+    reset_agent_history_to_system_prompt();
     return {};
 }
 
@@ -581,31 +572,12 @@ ApiResult<std::string> ZooChatService::get_system_prompt() {
 }
 
 ApiResult<std::string> ZooChatService::set_system_prompt(std::string prompt) {
-    std::string local_prompt;
-    {
-        std::lock_guard<std::mutex> lock(system_prompt_mutex_);
-        request_system_prompt_ = std::move(prompt);
-        local_prompt = request_system_prompt_;
-    }
+    auto local_prompt = update_system_prompt_state(std::move(prompt));
     if (agent_) {
         agent_->set_system_prompt(local_prompt);
     }
     if (session_store_) {
         session_store_->set_base_system_prompt(local_prompt);
-    }
-    {
-        std::lock_guard<std::mutex> lock(agent_history_mutex_);
-        if (!agent_history_.messages.empty() &&
-            agent_history_.messages.front().role == MessageRole::System) {
-            if (local_prompt.empty()) {
-                agent_history_.messages.erase(agent_history_.messages.begin());
-            } else {
-                agent_history_.messages.front().content = local_prompt;
-            }
-        } else if (!local_prompt.empty()) {
-            agent_history_.messages.insert(agent_history_.messages.begin(),
-                                           ChatMessage::system(local_prompt));
-        }
     }
     return local_prompt;
 }
@@ -685,6 +657,31 @@ AgentHistorySnapshot ZooChatService::make_agent_history_snapshot() const {
     return AgentHistorySnapshot{agent_history_.messages, estimated_tokens,
                                 model_config_.context_size,
                                 estimated_tokens > model_config_.context_size};
+}
+
+std::string ZooChatService::update_system_prompt_state(std::string prompt) {
+    std::scoped_lock lock(system_prompt_mutex_, agent_history_mutex_);
+    request_system_prompt_ = std::move(prompt);
+    if (!agent_history_.messages.empty() &&
+        agent_history_.messages.front().role == MessageRole::System) {
+        if (request_system_prompt_.empty()) {
+            agent_history_.messages.erase(agent_history_.messages.begin());
+        } else {
+            agent_history_.messages.front().content = request_system_prompt_;
+        }
+    } else if (!request_system_prompt_.empty()) {
+        agent_history_.messages.insert(agent_history_.messages.begin(),
+                                       ChatMessage::system(request_system_prompt_));
+    }
+    return request_system_prompt_;
+}
+
+void ZooChatService::reset_agent_history_to_system_prompt() {
+    std::scoped_lock lock(system_prompt_mutex_, agent_history_mutex_);
+    agent_history_.messages.clear();
+    if (!request_system_prompt_.empty()) {
+        agent_history_.messages.push_back(ChatMessage::system(request_system_prompt_));
+    }
 }
 
 void ZooChatService::track_session_request(const std::string& session_id,
