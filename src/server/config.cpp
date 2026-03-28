@@ -318,6 +318,8 @@ void from_json(const nlohmann::json& j, ServerConfig& config) {
             gen_json["record_tool_trace"] = zoo.at("record_tool_trace");
         }
         if (zoo.contains("sampling")) {
+            // Assigning the whole "sampling" object overwrites any keys already set
+            // above (e.g. repeat_last_n), so re-apply top-level overrides afterward.
             gen_json["sampling"] = zoo.at("sampling");
             if (zoo.contains("repeat_last_n")) {
                 gen_json["sampling"]["repeat_last_n"] = zoo.at("repeat_last_n");

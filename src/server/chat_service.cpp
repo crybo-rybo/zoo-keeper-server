@@ -552,9 +552,9 @@ ZooChatService::swap_agent_history(const AgentHistoryRequest& request) {
     std::lock_guard<std::mutex> lock(agent_history_mutex_);
     const auto previous = agent_history_;
     agent_history_ = make_history_snapshot(request);
-    return AgentHistorySnapshot{previous.messages, estimate_history_tokens(previous),
-                                model_config_.context_size,
-                                estimate_history_tokens(previous) > model_config_.context_size};
+    const auto estimated_tokens = estimate_history_tokens(previous);
+    return AgentHistorySnapshot{previous.messages, estimated_tokens, model_config_.context_size,
+                                estimated_tokens > model_config_.context_size};
 }
 
 ApiResult<AgentHistorySnapshot>
