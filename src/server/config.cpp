@@ -258,19 +258,11 @@ void from_json(const nlohmann::json& j, ServerConfig& config) {
     }
     {
         const auto& zoo = j.at("zoo");
-        static constexpr std::array<std::string_view, 12> kZooAllowed = {
-            "model_path",
-            "context_size",
-            "n_gpu_layers",
-            "use_mmap",
-            "use_mlock",
-            "max_history_messages",
-            "request_queue_capacity",
-            "max_tokens",
-            "system_prompt",
-            "sampling",
-            "max_tool_iterations",
-            "max_tool_retries",
+        static constexpr std::array<std::string_view, 15> kZooAllowed = {
+            "model_path",    "context_size",         "n_gpu_layers",           "use_mmap",
+            "use_mlock",     "max_history_messages", "request_queue_capacity", "max_tokens",
+            "repeat_last_n", "stop_sequences",       "record_tool_trace",      "system_prompt",
+            "sampling",      "max_tool_iterations",  "max_tool_retries",
         };
         check_unknown_keys(zoo, "zoo config", kZooAllowed);
 
@@ -316,8 +308,20 @@ void from_json(const nlohmann::json& j, ServerConfig& config) {
         if (zoo.contains("max_tokens")) {
             gen_json["max_tokens"] = zoo.at("max_tokens");
         }
+        if (zoo.contains("repeat_last_n")) {
+            gen_json["sampling"]["repeat_last_n"] = zoo.at("repeat_last_n");
+        }
+        if (zoo.contains("stop_sequences")) {
+            gen_json["stop_sequences"] = zoo.at("stop_sequences");
+        }
+        if (zoo.contains("record_tool_trace")) {
+            gen_json["record_tool_trace"] = zoo.at("record_tool_trace");
+        }
         if (zoo.contains("sampling")) {
             gen_json["sampling"] = zoo.at("sampling");
+            if (zoo.contains("repeat_last_n")) {
+                gen_json["sampling"]["repeat_last_n"] = zoo.at("repeat_last_n");
+            }
         }
         if (!gen_json.empty()) {
             config.default_generation = gen_json.get<zoo::GenerationOptions>();

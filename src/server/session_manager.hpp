@@ -46,6 +46,8 @@ class SessionStore {
     ApiResult<SessionSummary> create_session(const SessionCreateRequest& request);
     ApiResult<SessionSummary> get_session(std::string_view session_id);
     ApiResult<void> delete_session(std::string_view session_id);
+    /// Updates the base system prompt used for sessions created after this call.
+    void set_base_system_prompt(std::string base_system_prompt);
 
     /// Validates the request, builds the full message list (history + new user message),
     /// and marks the session as having an active request.
@@ -57,10 +59,15 @@ class SessionStore {
     void commit_result(std::string_view session_id, std::uint64_t request_id,
                        const ChatMessage& user_message,
                        const RuntimeResult<CompletionResult>& result);
+    /// Appends the user message and plain assistant text to history (on success).
+    void commit_response_text(std::string_view session_id, std::uint64_t request_id,
+                              const ChatMessage& user_message,
+                              const RuntimeResult<std::string>& result);
 
     /// Clears the active request without modifying history. Used by CompletionLease cleanup.
     void release_request(std::string_view session_id, std::uint64_t request_id);
 
+    /// Prevents new session work and marks the store as stopping.
     void stop();
 
   private:

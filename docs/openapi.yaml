@@ -43,24 +43,6 @@ components:
               type: string
               nullable: true
 
-    SessionSummary:
-      type: object
-      required: [id, model, created, last_used, expires_at]
-      properties:
-        id:
-          type: string
-        model:
-          type: string
-        created:
-          type: integer
-          format: int64
-        last_used:
-          type: integer
-          format: int64
-        expires_at:
-          type: integer
-          format: int64
-
     ChatMessage:
       type: object
       required: [role, content]
@@ -100,17 +82,28 @@ components:
 
     ToolInvocationRecord:
       type: object
+      required: [id, name, status, arguments]
       properties:
         id:
           type: string
         name:
           type: string
-        arguments_json:
-          type: string
         status:
           type: string
           enum: [succeeded, validation_failed, execution_failed]
-        result_json:
+        arguments:
+          description: Parsed tool arguments when valid JSON, otherwise the raw argument string.
+          oneOf:
+            - type: object
+            - type: array
+            - type: string
+            - type: number
+            - type: integer
+            - type: boolean
+        result:
+          description: Parsed tool result when valid JSON, otherwise the raw result string.
+          nullable: true
+        error:
           type: string
           nullable: true
 
@@ -125,6 +118,318 @@ components:
           format: int64
         tokens_per_second:
           type: number
+
+    SessionSummary:
+      type: object
+      required: [id, object, model, created, last_used, expires_at]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum: [session]
+        model:
+          type: string
+        created:
+          type: integer
+          format: int64
+        last_used:
+          type: integer
+          format: int64
+        expires_at:
+          type: integer
+          format: int64
+
+    SessionHealth:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        active:
+          type: integer
+          format: int64
+        max_sessions:
+          type: integer
+          format: int64
+        idle_ttl_seconds:
+          type: integer
+          format: int64
+
+    HealthSnapshot:
+      type: object
+      required: [status, ready, model, sessions, version]
+      properties:
+        status:
+          type: string
+          enum: [ok, starting]
+        ready:
+          type: boolean
+        version:
+          type: string
+        model:
+          type: object
+          properties:
+            id:
+              type: string
+        sessions:
+          $ref: "#/components/schemas/SessionHealth"
+
+    GenerationOverrides:
+      type: object
+      properties:
+        temperature:
+          type: number
+        top_p:
+          type: number
+        top_k:
+          type: integer
+        repeat_penalty:
+          type: number
+        repeat_last_n:
+          type: integer
+        max_tokens:
+          type: integer
+        seed:
+          type: integer
+        stop:
+          type: array
+          items:
+            type: string
+        record_tool_trace:
+          type: boolean
+
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        stream:
+          type: boolean
+          default: false
+        session_id:
+          type: string
+      allOf:
+        - $ref: "#/components/schemas/GenerationOverrides"
+
+    ChatCompletionResponse:
+      type: object
+      required: [id, object, created, model, choices, usage, zoo_metrics, tool_invocations]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum: [chat.completion]
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                $ref: "#/components/schemas/ChatMessage"
+              finish_reason:
+                type: string
+        usage:
+          $ref: "#/components/schemas/CompletionUsage"
+        zoo_metrics:
+          $ref: "#/components/schemas/ZooMetrics"
+        tool_invocations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolInvocationRecord"
+
+    ExtractionRequest:
+      type: object
+      required: [model, schema, messages]
+      properties:
+        model:
+          type: string
+        schema:
+          type: object
+          description: JSON Schema for the expected extraction result.
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        stream:
+          type: boolean
+          default: false
+        session_id:
+          type: string
+      allOf:
+        - $ref: "#/components/schemas/GenerationOverrides"
+
+    ExtractionResponse:
+      type: object
+      required: [id, object, created, model, text, data, usage, zoo_metrics, tool_invocations]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum: [extraction]
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+        text:
+          type: string
+          description: Raw model output used to produce the structured extraction.
+        data:
+          description: Parsed extraction result.
+        usage:
+          $ref: "#/components/schemas/CompletionUsage"
+        zoo_metrics:
+          $ref: "#/components/schemas/ZooMetrics"
+        tool_invocations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolInvocationRecord"
+
+    AgentChatRequest:
+      type: object
+      required: [model, message]
+      properties:
+        model:
+          type: string
+        message:
+          $ref: "#/components/schemas/ChatMessage"
+      allOf:
+        - $ref: "#/components/schemas/GenerationOverrides"
+
+    AgentHistoryRequest:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+
+    AgentHistoryMessageRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          $ref: "#/components/schemas/ChatMessage"
+
+    AgentHistorySnapshot:
+      type: object
+      required: [messages, estimated_tokens, context_size, context_exceeded]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        estimated_tokens:
+          type: integer
+        context_size:
+          type: integer
+        context_exceeded:
+          type: boolean
+
+    SystemPrompt:
+      type: object
+      required: [system_prompt]
+      properties:
+        system_prompt:
+          type: string
+
+    CancelResponse:
+      type: object
+      required: [id, cancelled]
+      properties:
+        id:
+          type: string
+        cancelled:
+          type: boolean
+
+    RuntimeSnapshot:
+      type: object
+      required:
+        [ready, model_id, model_config, agent_config, default_generation, tool_count, tools, sessions]
+      properties:
+        ready:
+          type: boolean
+        model_id:
+          type: string
+        model_config:
+          type: object
+          properties:
+            model_path:
+              type: string
+            context_size:
+              type: integer
+            n_gpu_layers:
+              type: integer
+            use_mmap:
+              type: boolean
+            use_mlock:
+              type: boolean
+        agent_config:
+          type: object
+          properties:
+            max_history_messages:
+              type: integer
+            request_queue_capacity:
+              type: integer
+            max_tool_iterations:
+              type: integer
+            max_tool_retries:
+              type: integer
+        default_generation:
+          type: object
+          properties:
+            max_tokens:
+              type: integer
+            stop_sequences:
+              type: array
+              items:
+                type: string
+            record_tool_trace:
+              type: boolean
+            sampling:
+              type: object
+              properties:
+                temperature:
+                  type: number
+                top_p:
+                  type: number
+                top_k:
+                  type: integer
+                repeat_penalty:
+                  type: number
+                repeat_last_n:
+                  type: integer
+                seed:
+                  type: integer
+        tool_count:
+          type: integer
+        tools:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [function]
+              function:
+                $ref: "#/components/schemas/ToolDefinition"
+        sessions:
+          $ref: "#/components/schemas/SessionHealth"
 
     ServerMetrics:
       type: object
@@ -175,50 +480,19 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    enum: [ok]
-                  ready:
-                    type: boolean
-                  version:
-                    type: string
-                    description: Server version (e.g. "0.0.1"). Added in step 6.2.
-                  model:
-                    type: object
-                    properties:
-                      id:
-                        type: string
-                  sessions:
-                    type: object
-                    properties:
-                      enabled:
-                        type: boolean
-                      active:
-                        type: integer
-                      max_sessions:
-                        type: integer
-                      idle_ttl_seconds:
-                        type: integer
+                $ref: "#/components/schemas/HealthSnapshot"
         "503":
           description: Server is starting or unhealthy
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    enum: [starting]
-                  ready:
-                    type: boolean
+                $ref: "#/components/schemas/HealthSnapshot"
 
   /v1/models:
     get:
       operationId: listModels
       summary: List available models
-      description: Returns the configured model_id in OpenAI list format.
+      description: Returns the configured `model_id` in OpenAI list format.
       responses:
         "200":
           description: Model list
@@ -240,6 +514,8 @@ paths:
                         object:
                           type: string
                           enum: [model]
+                        owned_by:
+                          type: string
         "401":
           description: Unauthorized
           content:
@@ -321,9 +597,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/sessions/{id}:
+  /v1/sessions/{session-id}:
     parameters:
-      - name: id
+      - name: session-id
         in: path
         required: true
         schema:
@@ -339,6 +615,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionSummary"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           description: Session not found
           content:
@@ -352,6 +634,12 @@ paths:
       responses:
         "204":
           description: Session deleted
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           description: Session not found
           content:
@@ -365,91 +653,20 @@ paths:
       summary: Create a chat completion
       description: >
         OpenAI-compatible subset. Supports `stream: true` for SSE streaming.
-        Accepted top-level fields: `model`, `messages`, `stream`, `session_id`,
-        `temperature`, `top_p`, `top_k`, `repeat_penalty`, `max_tokens`, `seed`, `stop`.
         Unknown fields return 400 with `error.code = "unknown_field"`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [model, messages]
-              properties:
-                model:
-                  type: string
-                messages:
-                  type: array
-                  items:
-                    $ref: "#/components/schemas/ChatMessage"
-                stream:
-                  type: boolean
-                  default: false
-                session_id:
-                  type: string
-                  description: >
-                    Associate with a server-owned session. When present, `messages`
-                    must contain exactly one new user message.
-                temperature:
-                  type: number
-                  description: Sampling temperature override. 0.0 = greedy.
-                top_p:
-                  type: number
-                  description: Nucleus sampling cutoff [0.0, 1.0].
-                top_k:
-                  type: integer
-                  description: Top-K sampling limit.
-                repeat_penalty:
-                  type: number
-                  description: Repetition penalty factor.
-                max_tokens:
-                  type: integer
-                  description: Maximum tokens to generate.
-                seed:
-                  type: integer
-                  description: RNG seed for reproducibility.
-                stop:
-                  type: array
-                  items:
-                    type: string
-                  description: Custom stop sequences.
+              $ref: "#/components/schemas/ChatCompletionRequest"
       responses:
         "200":
           description: Completion result (non-streaming) or SSE stream (streaming)
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  id:
-                    type: string
-                  object:
-                    type: string
-                    enum: [chat.completion]
-                  created:
-                    type: integer
-                    format: int64
-                  model:
-                    type: string
-                  choices:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        index:
-                          type: integer
-                        message:
-                          $ref: "#/components/schemas/ChatMessage"
-                        finish_reason:
-                          type: string
-                  usage:
-                    $ref: "#/components/schemas/CompletionUsage"
-                  tool_invocations:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ToolInvocationRecord"
-                  zoo_metrics:
-                    $ref: "#/components/schemas/ZooMetrics"
+                $ref: "#/components/schemas/ChatCompletionResponse"
             text/event-stream:
               schema:
                 type: string
@@ -467,8 +684,313 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "409":
+          description: Session is busy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
-          description: Service unavailable (queue full or model not ready)
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/extractions:
+    post:
+      operationId: createExtraction
+      summary: Create a structured extraction
+      description: >
+        Supports stateless extraction and session-backed extraction. When `stream: true`,
+        SSE sends `{"delta":"..."}` events, then the final extraction payload, then `[DONE]`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtractionRequest"
+      responses:
+        "200":
+          description: Extraction result (non-streaming) or SSE stream (streaming)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractionResponse"
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Session is busy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/agent/chat:
+    post:
+      operationId: createAgentChat
+      summary: Chat against the retained shared-agent history
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentChatRequest"
+      responses:
+        "200":
+          description: Chat completion result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/requests/{request-id}/cancel:
+    post:
+      operationId: cancelRequest
+      summary: Cancel an in-flight request by public request id
+      parameters:
+        - name: request-id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Cancellation accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Unknown request id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/agent/history:
+    get:
+      operationId: getAgentHistory
+      summary: Get the retained shared-agent history
+      responses:
+        "200":
+          description: History snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentHistorySnapshot"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    put:
+      operationId: replaceAgentHistory
+      summary: Replace the retained shared-agent history
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentHistoryRequest"
+      responses:
+        "200":
+          description: Updated history snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentHistorySnapshot"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      operationId: clearAgentHistory
+      summary: Clear the retained shared-agent history
+      responses:
+        "204":
+          description: History cleared
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/agent/history:swap:
+    post:
+      operationId: swapAgentHistory
+      summary: Swap the retained shared-agent history and return the previous snapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentHistoryRequest"
+      responses:
+        "200":
+          description: Previous history snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentHistorySnapshot"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/agent/history/messages:
+    post:
+      operationId: appendAgentHistoryMessage
+      summary: Append a single message to the retained shared-agent history
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentHistoryMessageRequest"
+      responses:
+        "200":
+          description: Updated history snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentHistorySnapshot"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/agent/system-prompt:
+    get:
+      operationId: getAgentSystemPrompt
+      summary: Get the effective shared-agent system prompt
+      responses:
+        "200":
+          description: Current system prompt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemPrompt"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    put:
+      operationId: updateAgentSystemPrompt
+      summary: Update the effective shared-agent system prompt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SystemPrompt"
+      responses:
+        "200":
+          description: Updated system prompt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemPrompt"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/runtime:
+    get:
+      operationId: getRuntime
+      summary: Get server runtime and configuration snapshot
+      responses:
+        "200":
+          description: Runtime snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeSnapshot"
+        "401":
+          description: Unauthorized
           content:
             application/json:
               schema:
