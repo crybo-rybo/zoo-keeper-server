@@ -17,7 +17,6 @@
 #include <drogon/drogon.h>
 
 namespace zks::server {
-namespace {
 
 void release_completion(const PendingChatCompletion& pending) {
     if (pending.lease) {
@@ -32,6 +31,8 @@ void finalize_completion(const PendingChatCompletion& pending,
     }
     release_completion(pending);
 }
+
+namespace {
 
 void log_request_start(const PendingChatCompletion& pending, const ChatCompletionRequest& request) {
     std::clog << "[request] event=start completion_id=" << pending.id << " model=" << pending.model

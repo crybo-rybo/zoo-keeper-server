@@ -423,22 +423,12 @@ void start_agent_chat(const std::shared_ptr<ServerRuntime>& runtime,
         auto result = pending->handle.get();
         if (!result) {
             increment_runtime_error_metrics(runtime->metrics(), result.error());
-            if (pending->on_result) {
-                pending->on_result(result);
-            }
-            if (pending->lease) {
-                pending->lease->release();
-            }
+            finalize_completion(*pending, result);
             callback(make_error_response(map_runtime_error_to_api_error(result.error())));
             return;
         }
         increment_tool_metrics(runtime->metrics(), result->tool_invocations);
-        if (pending->on_result) {
-            pending->on_result(result);
-        }
-        if (pending->lease) {
-            pending->lease->release();
-        }
+        finalize_completion(*pending, result);
         callback(
             make_chat_completion_response(pending->id, pending->created, pending->model, *result));
         return;
@@ -449,31 +439,19 @@ void start_agent_chat(const std::shared_ptr<ServerRuntime>& runtime,
             auto result = pending.handle.get();
             if (!result) {
                 increment_runtime_error_metrics(runtime->metrics(), result.error());
-                if (pending.on_result) {
-                    pending.on_result(result);
-                }
-                if (pending.lease) {
-                    pending.lease->release();
-                }
+                finalize_completion(pending, result);
                 callback(make_error_response(map_runtime_error_to_api_error(result.error())));
                 return;
             }
 
             increment_tool_metrics(runtime->metrics(), result->tool_invocations);
-            if (pending.on_result) {
-                pending.on_result(result);
-            }
-            if (pending.lease) {
-                pending.lease->release();
-            }
+            finalize_completion(pending, result);
             callback(
                 make_chat_completion_response(pending.id, pending.created, pending.model, *result));
         });
     if (!submit_result) {
         pending->cancel();
-        if (pending->lease) {
-            pending->lease->release();
-        }
+        release_completion(*pending);
         callback(make_error_response(
             service_unavailable_error("Server continuation executor is saturated", "server_busy")));
     }
