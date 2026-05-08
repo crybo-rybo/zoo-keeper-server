@@ -51,6 +51,7 @@ cmake --build build-test-ui --parallel
 | Option | Default | Purpose |
 |--------|---------|---------|
 | `ZKS_ENABLE_TEST_UI` | OFF | Browser test UI at `/_test` |
+| `ZKS_ENABLE_ZOO_HUB` | ON | Build zoo-keeper hub support for GGUF inspection and auto-config |
 | `ZKS_LIVE_SMOKE_MODEL` | (empty) | Path to GGUF model for live smoke test |
 | `ZOO_ENABLE_METAL` | ON (macOS) | Apple Metal GPU acceleration |
 | `ZOO_ENABLE_CUDA` | OFF | CUDA GPU acceleration |
@@ -86,6 +87,7 @@ Update `config/server.example.json` with a real GGUF `model_path` before startup
   "tools": [],
   "zoo": {
     "model_path": "/path/to/model.gguf",
+    "auto_configure_model": false,
     "context_size": 2048,
     "n_gpu_layers": -1,
     "max_tokens": -1,
@@ -109,7 +111,15 @@ When `bind_address` is non-loopback and `api_key` is unset, the server emits a
 startup warning because that configuration should only be used on a trusted
 network.
 
-The `zoo` object is passed directly to `zoo::Config`. See [zoo-keeper](https://github.com/crybo-rybo/zoo-keeper) for the full set of options including sampling parameters.
+Set `zoo.auto_configure_model` to `true` to inspect the configured GGUF through
+zoo-keeper's hub layer and seed `context_size`, `n_gpu_layers`, `use_mmap`, and
+`use_mlock` from model metadata. Explicit fields in the same `zoo` block still
+override the inspected defaults.
+
+The `zoo` object is mapped onto zoo-keeper's split `ModelConfig`,
+`AgentConfig`, and `GenerationOptions`. See
+[zoo-keeper](https://github.com/crybo-rybo/zoo-keeper) for the full set of
+options including sampling parameters.
 
 ## Configuration Examples
 
@@ -141,7 +151,7 @@ The `config/` directory contains ready-to-use templates:
 
 - `model` — string
 - `messages` — array of message objects; accepted fields are `role`, `content`,
-  and `tool_call_id` for `tool` messages
+  `tool_call_id` for `tool` messages, and assistant `tool_calls`
 - `stream` — optional boolean for SSE
 - `session_id` — optional; associates the request with a server-owned session
 

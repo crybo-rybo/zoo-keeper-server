@@ -8,6 +8,9 @@
 
 #include <nlohmann/json.hpp>
 #include <zoo/core/json.hpp>
+#ifdef ZOO_HUB_ENABLED
+#include <zoo/hub/inspector.hpp>
+#endif
 
 namespace zks::server {
 namespace {
@@ -27,6 +30,34 @@ void check_unknown_keys(const nlohmann::json& json, std::string_view context,
     auto result = reject_unknown_keys(json, context, allowed_keys);
     if (!result) {
         throw nlohmann::json::other_error::create(501, result.error(), nullptr);
+    }
+}
+
+Result<void> validate_model_config_for_config_load(const zoo::ModelConfig& config) {
+    if (config.model_path.empty()) {
+        return std::unexpected("Model path cannot be empty");
+    }
+    if (config.context_size <= 0) {
+        return std::unexpected("Context size must be positive");
+    }
+    return {};
+}
+
+void apply_model_config_fields(const nlohmann::json& zoo, zoo::ModelConfig& model_config) {
+    if (zoo.contains("model_path")) {
+        zoo.at("model_path").get_to(model_config.model_path);
+    }
+    if (zoo.contains("context_size")) {
+        zoo.at("context_size").get_to(model_config.context_size);
+    }
+    if (zoo.contains("n_gpu_layers")) {
+        zoo.at("n_gpu_layers").get_to(model_config.n_gpu_layers);
+    }
+    if (zoo.contains("use_mmap")) {
+        zoo.at("use_mmap").get_to(model_config.use_mmap);
+    }
+    if (zoo.contains("use_mlock")) {
+        zoo.at("use_mlock").get_to(model_config.use_mlock);
     }
 }
 
@@ -77,8 +108,8 @@ Result<void> ServerConfig::validate() const {
                                    "' is invalid: " + validation.error());
         }
     }
-    if (auto validation = model_config.validate(); !validation) {
-        return std::unexpected(validation.error().to_string());
+    if (auto validation = validate_model_config_for_config_load(model_config); !validation) {
+        return std::unexpected(validation.error());
     }
     if (auto validation = agent_config.validate(); !validation) {
         return std::unexpected(validation.error().to_string());
@@ -258,34 +289,52 @@ void from_json(const nlohmann::json& j, ServerConfig& config) {
     }
     {
         const auto& zoo = j.at("zoo");
-        static constexpr std::array<std::string_view, 15> kZooAllowed = {
-            "model_path",    "context_size",         "n_gpu_layers",           "use_mmap",
-            "use_mlock",     "max_history_messages", "request_queue_capacity", "max_tokens",
-            "repeat_last_n", "stop_sequences",       "record_tool_trace",      "system_prompt",
-            "sampling",      "max_tool_iterations",  "max_tool_retries",
+        static constexpr std::array<std::string_view, 16> kZooAllowed = {
+            "model_path",
+            "context_size",
+            "n_gpu_layers",
+            "use_mmap",
+            "use_mlock",
+            "max_history_messages",
+            "request_queue_capacity",
+            "max_tokens",
+            "repeat_last_n",
+            "stop_sequences",
+            "record_tool_trace",
+            "system_prompt",
+            "sampling",
+            "max_tool_iterations",
+            "max_tool_retries",
+            "auto_configure_model",
         };
         check_unknown_keys(zoo, "zoo config", kZooAllowed);
 
-        // Build sub-objects for each zoo config type.
-        nlohmann::json model_json;
-        if (zoo.contains("model_path")) {
-            model_json["model_path"] = zoo.at("model_path");
+        if (auto it = zoo.find("auto_configure_model"); it != zoo.end()) {
+            if (!it->is_boolean()) {
+                throw nlohmann::json::type_error::create(
+                    302, "auto_configure_model must be a boolean", nullptr);
+            }
+            config.auto_configure_model = it->get<bool>();
         }
-        if (zoo.contains("context_size")) {
-            model_json["context_size"] = zoo.at("context_size");
+        if (config.auto_configure_model) {
+#ifdef ZOO_HUB_ENABLED
+            if (!zoo.contains("model_path") || !zoo.at("model_path").is_string()) {
+                throw nlohmann::json::type_error::create(
+                    302, "model_path must be a string when auto_configure_model is true", nullptr);
+            }
+            const auto configured =
+                zoo::hub::GgufInspector::auto_configure(zoo.at("model_path").get<std::string>());
+            if (!configured) {
+                throw nlohmann::json::other_error::create(
+                    501, "auto_configure_model failed: " + configured.error().to_string(), nullptr);
+            }
+            config.model_config = *configured;
+#else
+            throw nlohmann::json::other_error::create(
+                501, "auto_configure_model requires ZKS_ENABLE_ZOO_HUB=ON", nullptr);
+#endif
         }
-        if (zoo.contains("n_gpu_layers")) {
-            model_json["n_gpu_layers"] = zoo.at("n_gpu_layers");
-        }
-        if (zoo.contains("use_mmap")) {
-            model_json["use_mmap"] = zoo.at("use_mmap");
-        }
-        if (zoo.contains("use_mlock")) {
-            model_json["use_mlock"] = zoo.at("use_mlock");
-        }
-        if (!model_json.empty()) {
-            config.model_config = model_json.get<zoo::ModelConfig>();
-        }
+        apply_model_config_fields(zoo, config.model_config);
 
         nlohmann::json agent_json;
         if (zoo.contains("max_history_messages")) {

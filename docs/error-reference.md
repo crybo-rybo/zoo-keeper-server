@@ -26,12 +26,13 @@ override is invalid.
 |---|---|
 | `unknown_field` | Unrecognized field in the request body. |
 | `invalid_role` | Message role is not one of `system`, `user`, `assistant`, or `tool`. |
-| `invalid_message_sequence` | Messages violate role-ordering rules. |
+| `invalid_message_sequence` | Messages violate role-ordering rules, such as starting with a tool message or repeating the same non-tool role consecutively. |
 | `invalid_config` | Zoo configuration or sampling parameter is invalid. |
 | `invalid_output_schema` | A structured extraction output schema is malformed or unsupported. |
 | `context_window_exceeded` | The prompt exceeds the model's available context window. |
 | `tool_not_found` | A referenced tool name is not registered on the agent. |
 | `invalid_model` | The `model` field does not match the server's configured `model_id`. |
+| `invalid_model_identifier` | A hub/HuggingFace model identifier is malformed. |
 | `sessions_disabled` | A session-backed request was made while sessions are disabled. |
 
 ### Without `code`
@@ -48,6 +49,7 @@ These validation errors set `param` but not `code`:
 - `system_prompt` is present but not a string.
 - `message.role` or `message.content` is missing or not a string.
 - `tool_call_id` is required on tool messages but missing or not a string.
+- `tool_calls` is present on a non-assistant message, is not an array, or contains malformed function-call entries.
 - Session-backed chat or extraction requests contain more than one new user message.
 
 ## 401 — auth_error
@@ -64,12 +66,14 @@ Only returned when `api_key` is set in the server config. `/healthz` is exempt f
 |---|---|
 | `session_not_found` | The requested session ID does not exist. |
 | `request_not_found` | The requested public request ID is unknown or no longer in flight. |
+| `model_not_found` | A hub-managed model name, alias, or path could not be resolved. |
 
 ## 409 — conflict_error
 
 | Code | Description |
 |---|---|
 | `session_busy` | The session already has an active in-flight request. |
+| `model_already_exists` | A hub-managed model is already registered. |
 
 ## 413 — Request Entity Too Large
 
@@ -91,6 +95,8 @@ Returned when the server encounters an internal failure during inference.
 | `tool_execution_failed` | A registered tool handler returned an error, including command-tool exit failures, invalid stdout, or timeouts. |
 | `tool_retries_exhausted` | Tool-call validation retries were exhausted or the tool loop hit its configured limit. |
 | `extraction_failed` | Structured extraction could not produce schema-conforming output. |
+| `hub_error` | GGUF inspection, model-store persistence, or hub filesystem access failed. |
+| `model_download_failed` | A model download or HuggingFace API request failed. |
 | `runtime_error` | Catch-all for unmapped internal errors. |
 
 ## 503 — service_unavailable_error
