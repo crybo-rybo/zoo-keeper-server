@@ -32,20 +32,25 @@ Clone with submodules:
 git submodule update --init --recursive
 ```
 
-Drogon is fetched at CMake configure time.
+Drogon and zoo-keeper's transitive build dependencies are fetched at CMake configure time.
 
 Configure and build:
 
 ```bash
-cmake -S . -B build
+scripts/build
+```
+
+The equivalent raw CMake commands are:
+
+```bash
+cmake -S . -B build -DBUILD_TESTING=ON
 cmake --build build --parallel
 ```
 
 To compile the test-only browser console at `/_test`:
 
 ```bash
-cmake -S . -B build-test-ui -DZKS_ENABLE_TEST_UI=ON
-cmake --build build-test-ui --parallel
+scripts/build --test-ui
 ```
 
 | Option | Default | Purpose |
@@ -80,6 +85,12 @@ Update `config/server.example.json` with a real GGUF `model_path` before startup
   "port": 8080,
   "model_id": "local-model",
   "api_key": null,
+  "http": {
+    "client_max_body_size_bytes": 1048576,
+    "client_max_memory_body_size_bytes": 65536,
+    "idle_connection_timeout_seconds": 60,
+    "cors_allow_origins": []
+  },
   "sessions": {
     "max_sessions": 0,
     "idle_ttl_seconds": 900
@@ -98,6 +109,13 @@ Update `config/server.example.json` with a real GGUF `model_path` before startup
 
 Set `api_key` to a non-empty string to require `Authorization: Bearer <key>` on
 all non-`/healthz` endpoints. Omit or set to `null` for trusted localhost mode.
+
+Use `http.client_max_body_size_bytes`,
+`http.client_max_memory_body_size_bytes`, and
+`http.idle_connection_timeout_seconds` to tune Drogon request limits and idle
+connection handling. `http.cors_allow_origins` defaults to an empty array,
+which disables CORS response headers. Set exact browser origins, or `"*"`,
+when cross-origin browser clients need access.
 
 Set `sessions.max_sessions` to `0` (the default) to disable sessions entirely.
 
@@ -143,7 +161,17 @@ The `config/` directory contains ready-to-use templates:
 | `/v1/sessions` | POST | Create a session |
 | `/v1/sessions/{id}` | GET / DELETE | Session metadata / teardown |
 | `/v1/chat/completions` | POST | OpenAI-compatible subset; supports `stream: true` |
+| `/v1/extractions` | POST | Structured extraction; supports `stream: true` |
+| `/v1/agent/chat` | POST | Chat against retained shared-agent history |
+| `/v1/agent/history` | GET / PUT / DELETE | Inspect, replace, or clear retained shared-agent history |
+| `/v1/agent/history:swap` | POST | Atomically swap retained shared-agent history |
+| `/v1/agent/history/messages` | POST | Append one retained shared-agent history message |
+| `/v1/agent/system-prompt` | GET / PUT | Inspect or replace the retained agent system prompt |
+| `/v1/requests/{id}/cancel` | POST | Cancel an in-flight request by public request id |
+| `/v1/runtime` | GET | Runtime configuration snapshot |
 | `/metrics` | GET | Request counters and uptime |
+
+The machine-readable API contract lives in [docs/openapi.yaml](docs/openapi.yaml).
 
 ### Chat completions
 
@@ -168,6 +196,18 @@ completion reports per-invocation outcomes in `tool_invocations`.
 Under extreme load, the server's bounded continuation executor may reject new
 completion follow-up work with `503` and `error.code = "server_busy"` rather
 than growing threads without bound.
+
+### Structured extraction and retained agent APIs
+
+`POST /v1/extractions` accepts the same chat-style `messages` input as chat
+completion requests plus a required JSON `schema`. Non-streaming responses
+include both raw model `text` and parsed `data`; streaming responses emit
+incremental `delta` events, then the final extraction payload, then `[DONE]`.
+
+The `/v1/agent/*` endpoints expose zoo-keeper's retained shared-agent state for
+advanced workflows. They are intentionally separate from session-backed chat:
+sessions keep per-client history in `SessionStore`, while retained-agent
+endpoints mutate the single shared `zoo::Agent` history and system prompt.
 
 ### Metrics
 
@@ -289,6 +329,10 @@ One `zoo::Agent` is loaded at startup and shared across all requests. Sessions d
 - **Sessions are in-memory and process-lifetime only.** There is no persistence; sessions are lost on restart.
 - **macOS + Metal + sessions: OOM during inference will abort the process.**
   On macOS with Metal enabled, a device out-of-memory condition during inference triggers a fatal abort in the upstream `llama.cpp` Metal backend before `zoo-keeper` can surface a recoverable error. Reduce `n_gpu_layers` or `context_size`, or disable sessions (`max_sessions = 0`) if you hit this. Tracked upstream.
+
+## Releases
+
+Release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

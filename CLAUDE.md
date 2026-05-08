@@ -25,6 +25,7 @@ scripts/format-check       # Check formatting (exits non-zero on violations)
 | Option | Default | Purpose |
 |--------|---------|---------|
 | `ZKS_ENABLE_TEST_UI` | OFF | Enables browser test UI at `/_test` |
+| `ZKS_ENABLE_ZOO_HUB` | ON | Enables zoo-keeper hub support for GGUF inspection and auto-config |
 | `ZKS_LIVE_SMOKE_MODEL` | (empty) | Path to GGUF model for live smoke test |
 | `ZOO_ENABLE_METAL` | ON (macOS) | Apple Metal GPU acceleration |
 | `ZOO_ENABLE_CUDA` | OFF | CUDA GPU acceleration |
@@ -61,10 +62,18 @@ HTTP Request → api_routes.cpp → ZooChatService → SessionStore (optional)
 |----------|--------|-------|
 | `/healthz` | GET | 200 if ready, 503 otherwise |
 | `/v1/models` | GET | Returns the configured `model_id` |
-| `/v1/tools` | GET | Server-owned tools (currently empty) |
+| `/v1/tools` | GET | Server-owned tool catalog from `tools` config |
 | `/v1/sessions` | POST | Create session |
 | `/v1/sessions/{id}` | GET / DELETE | Session metadata / teardown |
 | `/v1/chat/completions` | POST | OpenAI-compatible; supports `stream: true` (SSE) |
+| `/v1/extractions` | POST | Structured extraction; supports `stream: true` |
+| `/v1/agent/chat` | POST | Chat against retained shared-agent history |
+| `/v1/agent/history` | GET / PUT / DELETE | Inspect, replace, or clear retained shared-agent history |
+| `/v1/agent/history:swap` | POST | Atomically swap retained shared-agent history |
+| `/v1/agent/history/messages` | POST | Append one retained shared-agent history message |
+| `/v1/agent/system-prompt` | GET / PUT | Inspect or replace retained agent system prompt |
+| `/v1/requests/{id}/cancel` | POST | Cancel an in-flight request by public request id |
+| `/v1/runtime` | GET | Runtime configuration snapshot |
 
 Chat completions accept `session_id` to associate requests with a session for history continuity.
 
@@ -81,7 +90,8 @@ Chat completions accept `session_id` to associate requests with a session for hi
   "http": {
     "client_max_body_size_bytes": 1048576,
     "client_max_memory_body_size_bytes": 65536,
-    "idle_connection_timeout_seconds": 60
+    "idle_connection_timeout_seconds": 60,
+    "cors_allow_origins": []
   },
   "sessions": {
     "max_sessions": 0,
@@ -90,6 +100,7 @@ Chat completions accept `session_id` to associate requests with a session for hi
   "tools": [],
   "zoo": {
     "model_path": "/path/to/model.gguf",
+    "auto_configure_model": false,
     "context_size": 2048,
     "n_gpu_layers": -1,
     "max_tokens": -1,
@@ -112,6 +123,8 @@ Chat completions accept `session_id` to associate requests with a session for hi
 `api_key`: set to a non-null string to require `Authorization: Bearer <key>` auth. Omit or `null` for trusted-localhost mode.
 
 `sessions.max_sessions = 0` disables sessions entirely. `tools` is an array of `CommandToolConfig` objects; see the README for the full schema.
+
+`zoo.auto_configure_model = true` uses zoo-keeper hub support to inspect the GGUF and seed model settings. Explicit `zoo` fields still override inspected defaults.
 
 ## Code Style
 

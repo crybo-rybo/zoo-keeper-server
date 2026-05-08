@@ -233,6 +233,39 @@ TEST(ConfigTest, ExplicitHttpOverrides) {
     EXPECT_EQ(cfg->http.idle_connection_timeout_seconds, 120);
 }
 
+TEST(ConfigTest, CorsOriginsParseCorrectly) {
+    TempDir tmp;
+    auto file = tmp.path / "cors.json";
+    ASSERT_TRUE(write_text_file(file,
+                                R"json({
+  "model_id": "demo-model",
+  "http": { "cors_allow_origins": ["http://localhost:3000", "https://app.example"] },
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json"));
+
+    auto cfg = zks::server::load_config(file);
+    ASSERT_TRUE(cfg.has_value());
+    ASSERT_EQ(cfg->http.cors_allow_origins.size(), 2u);
+    EXPECT_EQ(cfg->http.cors_allow_origins[0], "http://localhost:3000");
+    EXPECT_EQ(cfg->http.cors_allow_origins[1], "https://app.example");
+}
+
+TEST(ConfigTest, EmptyCorsOriginRejected) {
+    TempDir tmp;
+    auto file = tmp.path / "empty_cors_origin.json";
+    ASSERT_TRUE(write_text_file(file,
+                                R"json({
+  "model_id": "demo-model",
+  "http": { "cors_allow_origins": [""] },
+  "zoo": { "model_path": "/tmp/demo.gguf" }
+})json"));
+
+    auto cfg = zks::server::load_config(file);
+    ASSERT_FALSE(cfg.has_value());
+    EXPECT_NE(cfg.error().find("http.cors_allow_origins entries must not be empty"),
+              std::string::npos);
+}
+
 TEST(ConfigTest, UnknownHttpKeyRejected) {
     TempDir tmp;
     auto file = tmp.path / "unknown_http.json";

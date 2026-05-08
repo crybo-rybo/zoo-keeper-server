@@ -6,6 +6,13 @@
 
 ---
 
+> Status note for v0.0.4: this file is a historical audit record. Several
+> detailed findings below have since been resolved or changed by later
+> refactors; use the resolved-items table and current source/tests before
+> treating any item as an active release blocker.
+
+---
+
 ## Items Resolved in `refactor/architectural-refinement` (2026-03-15)
 
 The following findings from this roadmap were fully or partially addressed by PR #12:
@@ -195,13 +202,13 @@ That said, a principal-engineer-level review reveals issues across security, cod
 **Fix:** Add `install(TARGETS zoo_keeper_server DESTINATION bin)` and optionally install config templates.
 
 ### 24. Version Not Embedded in Binary or API
-**Issue:** `project(zoo-keeper-server VERSION 0.0.1)` is the only version marker. The binary has no `--version` flag, `/healthz` doesn't include a version field, and there's no compile-time version header.
-**Fix:** Generate a `version.hpp` from CMake, add `--version` to main, include version in `/healthz` response.
+**Historical issue:** Earlier builds only kept the project version in CMake. Later work
+generated `version.hpp`, added `--version`, and included `version` in `/healthz`.
 
 ### 25. `README.md` References Non-Existent Docs
 **File:** `README.md:68-69`
-**Issue:** README references `docs/v0.0.1-roadmap.md` and `docs/v0.0.1-release-notes.md` but the `docs/` directory only contains `error-reference.md`, `images/`, and `test-ui.md`. These are dead links.
-**Fix:** Either create the referenced files or remove the links.
+**Historical issue:** Earlier README revisions referenced release docs that were
+not present. Current release notes are tracked in `CHANGELOG.md`.
 
 ### 26. `CLAUDE.md` Missing Documentation for Several Config Sections
 **File:** `CLAUDE.md`

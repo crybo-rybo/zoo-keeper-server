@@ -5,7 +5,8 @@
   "http": {
     "client_max_body_size_bytes": 1048576,
     "client_max_memory_body_size_bytes": 65536,
-    "idle_connection_timeout_seconds": 60
+    "idle_connection_timeout_seconds": 60,
+    "cors_allow_origins": []
   },
   "sessions": {
     "max_sessions": 0,
@@ -13,6 +14,7 @@
   },
   "zoo": {
     "model_path": "/path/to/your/model.gguf",
+    "auto_configure_model": false,
     "context_size": 2048,
     "n_gpu_layers": -1,
     "max_tokens": -1,
