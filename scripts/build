@@ -39,7 +39,7 @@ elif [ "$SANITIZE" = true ]; then
 fi
 
 # --- Auto-init submodules if needed ---
-if [ ! -d "extern/zoo-keeper/.git" ]; then
+if [ ! -e "extern/zoo-keeper/.git" ]; then
     echo "Initializing submodules..."
     git submodule update --init --recursive
 fi

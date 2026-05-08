@@ -59,6 +59,7 @@ struct ServerConfig {
     zoo::ModelConfig model_config;
     zoo::AgentConfig agent_config;
     zoo::GenerationOptions default_generation;
+    bool auto_configure_model = false;
     std::string system_prompt;
 
     [[nodiscard]] Result<void> validate() const;

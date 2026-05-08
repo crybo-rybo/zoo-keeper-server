@@ -29,6 +29,46 @@ TEST(ApiTest, ParseValidChatCompletionRequest) {
     EXPECT_EQ(parsed->messages[1].role, zks::server::MessageRole::User);
 }
 
+TEST(ApiTest, ParseMidConversationSystemMessage) {
+    nlohmann::json body = {
+        {"model", "local-model"},
+        {"messages",
+         {{{"role", "user"}, {"content", "Hello"}},
+          {{"role", "system"}, {"content", "Use metric units."}},
+          {{"role", "user"}, {"content", "How far?"}}}},
+    };
+
+    auto parsed = zks::server::parse_chat_completion_request(body.dump());
+    ASSERT_TRUE(parsed.has_value());
+    ASSERT_EQ(parsed->messages.size(), 3u);
+    EXPECT_EQ(parsed->messages[1].role, zks::server::MessageRole::System);
+    EXPECT_EQ(parsed->messages[1].content, "Use metric units.");
+}
+
+TEST(ApiTest, ParseAssistantToolCalls) {
+    nlohmann::json body = {
+        {"model", "local-model"},
+        {"messages",
+         {{{"role", "user"}, {"content", "Look this up."}},
+          {{"role", "assistant"},
+           {"content", ""},
+           {"tool_calls",
+            {{{"id", "call-1"},
+              {"type", "function"},
+              {"function", {{"name", "lookup"}, {"arguments", R"({"id":1})"}}}}}}},
+          {{"role", "tool"}, {"tool_call_id", "call-1"}, {"content", R"({"ok":true})"}},
+          {{"role", "assistant"}, {"content", "Done"}}}},
+    };
+
+    auto parsed = zks::server::parse_chat_completion_request(body.dump());
+    ASSERT_TRUE(parsed.has_value());
+    ASSERT_EQ(parsed->messages.size(), 4u);
+    ASSERT_EQ(parsed->messages[1].tool_calls.size(), 1u);
+    EXPECT_EQ(parsed->messages[1].tool_calls[0].id, "call-1");
+    EXPECT_EQ(parsed->messages[1].tool_calls[0].name, "lookup");
+    EXPECT_EQ(parsed->messages[1].tool_calls[0].arguments_json, R"({"id":1})");
+}
+
 TEST(ApiTest, UnknownRequestFieldRejected) {
     auto parsed = zks::server::parse_chat_completion_request(
         R"json({"model":"local-model","messages":[{"role":"user","content":"Hello"}],"bogus_field":true})json");
@@ -148,6 +188,16 @@ TEST(ApiTest, RuntimeErrorToApiErrorMapping) {
     EXPECT_EQ(tool_retries.http_status, 500);
     EXPECT_EQ(tool_retries.type, "server_error");
     EXPECT_EQ(tool_retries.code, std::optional<std::string>{"tool_retries_exhausted"});
+
+    auto hub_model_missing = zks::server::map_runtime_error_to_api_error(
+        zks::server::RuntimeError{zks::server::RuntimeErrorCode::ModelNotFound, "missing"});
+    EXPECT_EQ(hub_model_missing.http_status, 404);
+    EXPECT_EQ(hub_model_missing.code, std::optional<std::string>{"model_not_found"});
+
+    auto hub_identifier = zks::server::map_runtime_error_to_api_error(
+        zks::server::RuntimeError{zks::server::RuntimeErrorCode::InvalidModelIdentifier, "bad"});
+    EXPECT_EQ(hub_identifier.http_status, 400);
+    EXPECT_EQ(hub_identifier.code, std::optional<std::string>{"invalid_model_identifier"});
 
     auto template_failed = zks::server::map_runtime_error_to_api_error(zks::server::RuntimeError{
         zks::server::RuntimeErrorCode::TemplateRenderFailed, "render error"});

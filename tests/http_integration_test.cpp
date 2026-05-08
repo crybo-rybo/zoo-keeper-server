@@ -309,6 +309,42 @@ TEST_F(HttpIntegrationTest, AgentHistoryEndpointsReturnSnapshots) {
     EXPECT_EQ(get_json.at("messages")[0].at("content"), "Base");
 }
 
+TEST_F(HttpIntegrationTest, AgentHistoryRoundTripsAssistantToolCalls) {
+    auto replace_req = drogon::HttpRequest::newHttpRequest();
+    replace_req->setPath("/v1/agent/history");
+    replace_req->setMethod(drogon::Put);
+    replace_req->addHeader("Authorization", "Bearer test-secret");
+    replace_req->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    nlohmann::json body = {
+        {"messages",
+         {{{"role", "user"}, {"content", "Lookup id 1."}},
+          {{"role", "assistant"},
+           {"content", ""},
+           {"tool_calls",
+            {{{"id", "call-1"},
+              {"type", "function"},
+              {"function", {{"name", "lookup"}, {"arguments", R"({"id":1})"}}}}}}},
+          {{"role", "tool"}, {"tool_call_id", "call-1"}, {"content", R"({"name":"Ada"})"}},
+          {{"role", "assistant"}, {"content", "Ada"}}}},
+    };
+    replace_req->setBody(body.dump());
+
+    auto [replace_status, replace_resp] = client()->sendRequest(replace_req, 5.0);
+    ASSERT_EQ(replace_status, drogon::ReqResult::Ok);
+    ASSERT_TRUE(replace_resp);
+    EXPECT_EQ(replace_resp->getStatusCode(), drogon::k200OK);
+
+    auto json = nlohmann::json::parse(std::string(replace_resp->body()), nullptr, false);
+    ASSERT_FALSE(json.is_discarded());
+    ASSERT_EQ(json.at("messages").size(), 4u);
+    const auto& tool_calls = json.at("messages")[1].at("tool_calls");
+    ASSERT_EQ(tool_calls.size(), 1u);
+    EXPECT_EQ(tool_calls[0].at("id"), "call-1");
+    EXPECT_EQ(tool_calls[0].at("type"), "function");
+    EXPECT_EQ(tool_calls[0].at("function").at("name"), "lookup");
+    EXPECT_EQ(tool_calls[0].at("function").at("arguments"), R"({"id":1})");
+}
+
 TEST_F(HttpIntegrationTest, AgentHistorySwapReturnsPreviousSnapshot) {
     auto seed_req = drogon::HttpRequest::newHttpRequest();
     seed_req->setPath("/v1/agent/history");

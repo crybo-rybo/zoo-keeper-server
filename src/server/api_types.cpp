@@ -1,5 +1,7 @@
 #include "server/api_types.hpp"
 
+#include <span>
+
 namespace zks::server {
 
 std::string_view to_string(MessageRole role) noexcept {
@@ -8,22 +10,10 @@ std::string_view to_string(MessageRole role) noexcept {
 
 Result<void> validate_message_sequence(const std::vector<ChatMessage>& history,
                                        MessageRole next_role) {
-    if (history.empty()) {
-        if (next_role == MessageRole::Tool) {
-            return std::unexpected("First message cannot be a tool response");
-        }
-        return {};
+    auto result = zoo::validate_role_sequence(std::span<const ChatMessage>(history), next_role);
+    if (!result) {
+        return std::unexpected(result.error().message);
     }
-
-    if (next_role == MessageRole::System) {
-        return std::unexpected("System message only allowed at the beginning");
-    }
-
-    const MessageRole last_role = history.back().role;
-    if (next_role == last_role && next_role != MessageRole::Tool) {
-        return std::unexpected("Cannot have consecutive messages with the same role (except Tool)");
-    }
-
     return {};
 }
 

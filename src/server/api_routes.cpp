@@ -24,6 +24,16 @@ nlohmann::json make_message_body(const ChatMessage& message) {
     if (!message.tool_call_id.empty()) {
         body["tool_call_id"] = message.tool_call_id;
     }
+    if (!message.tool_calls.empty()) {
+        nlohmann::json tool_calls = nlohmann::json::array();
+        for (const auto& call : message.tool_calls) {
+            tool_calls.push_back(
+                {{"id", call.id},
+                 {"type", "function"},
+                 {"function", {{"name", call.name}, {"arguments", call.arguments_json}}}});
+        }
+        body["tool_calls"] = std::move(tool_calls);
+    }
     return body;
 }
 
@@ -66,7 +76,8 @@ nlohmann::json make_runtime_body(const ServerRuntime& runtime) {
                             {"context_size", chat_service.model_config().context_size},
                             {"n_gpu_layers", chat_service.model_config().n_gpu_layers},
                             {"use_mmap", chat_service.model_config().use_mmap},
-                            {"use_mlock", chat_service.model_config().use_mlock}};
+                            {"use_mlock", chat_service.model_config().use_mlock},
+                            {"auto_configure_model", runtime.config().auto_configure_model}};
     body["agent_config"] = {
         {"max_history_messages", chat_service.agent_config().max_history_messages},
         {"request_queue_capacity", chat_service.agent_config().request_queue_capacity},

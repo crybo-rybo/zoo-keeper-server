@@ -397,3 +397,20 @@ TEST(ConfigTest, ZooBlockAcceptsExtendedGenerationFields) {
     EXPECT_EQ(config->default_generation.stop_sequences[0], "END");
     EXPECT_TRUE(config->default_generation.record_tool_trace);
 }
+
+TEST(ConfigTest, ZooBlockAcceptsAutoConfigureFlag) {
+    TempDir tmp;
+    auto file = tmp.path / "auto_configure_false.json";
+    ASSERT_TRUE(write_text_file(file,
+                                R"json({
+  "model_id": "demo-model",
+  "zoo": {
+    "model_path": "/tmp/demo.gguf",
+    "auto_configure_model": false
+  }
+})json"));
+
+    auto config = zks::server::load_config(file);
+    ASSERT_TRUE(config.has_value());
+    EXPECT_FALSE(config->auto_configure_model);
+}

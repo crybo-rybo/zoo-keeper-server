@@ -54,6 +54,29 @@ components:
           type: string
         tool_call_id:
           type: string
+        tool_calls:
+          type: array
+          description: Assistant tool calls in OpenAI-compatible function-call shape.
+          items:
+            $ref: "#/components/schemas/ToolCall"
+
+    ToolCall:
+      type: object
+      required: [id, type, function]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [function]
+        function:
+          type: object
+          required: [name, arguments]
+          properties:
+            name:
+              type: string
+            arguments:
+              type: string
 
     ToolDefinition:
       type: object
@@ -378,6 +401,8 @@ components:
             use_mmap:
               type: boolean
             use_mlock:
+              type: boolean
+            auto_configure_model:
               type: boolean
         agent_config:
           type: object

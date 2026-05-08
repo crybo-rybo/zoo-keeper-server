@@ -2,17 +2,10 @@ include_guard(GLOBAL)
 
 set(ZKS_SUBMODULE_HINT "Run: git submodule update --init --recursive")
 set(ZKS_ZOO_KEEPER_DIR "${PROJECT_SOURCE_DIR}/extern/zoo-keeper")
-set(ZKS_LLAMA_DIR "${ZKS_ZOO_KEEPER_DIR}/extern/llama.cpp")
 
 if(NOT EXISTS "${ZKS_ZOO_KEEPER_DIR}/CMakeLists.txt")
     message(FATAL_ERROR
         "Missing zoo-keeper submodule at extern/zoo-keeper. ${ZKS_SUBMODULE_HINT}"
-    )
-endif()
-
-if(NOT EXISTS "${ZKS_LLAMA_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR
-        "Missing nested llama.cpp submodule under extern/zoo-keeper. ${ZKS_SUBMODULE_HINT}"
     )
 endif()
 

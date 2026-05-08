@@ -43,9 +43,55 @@ ApiResult<MessageRole> parse_role(std::string_view role) {
                                                  "messages", "invalid_role"));
 }
 
+ApiResult<zoo::OwnedToolCall> parse_tool_call(const nlohmann::json& json) {
+    static constexpr std::array<const char*, 3> kAllowedToolCallKeys = {"id", "type", "function"};
+    if (auto unknown_keys = reject_api_unknown_keys(json, "tool_call", kAllowedToolCallKeys);
+        !unknown_keys) {
+        return std::unexpected(unknown_keys.error());
+    }
+    if (!json.contains("id") || !json.at("id").is_string()) {
+        return std::unexpected(
+            invalid_request_error("tool_call.id must be a string", "messages.tool_calls"));
+    }
+    if (!json.contains("type") || !json.at("type").is_string()) {
+        return std::unexpected(
+            invalid_request_error("tool_call.type must be a string", "messages.tool_calls"));
+    }
+    if (json.at("type").get_ref<const std::string&>() != "function") {
+        return std::unexpected(
+            invalid_request_error("tool_call.type must be function", "messages.tool_calls"));
+    }
+    if (!json.contains("function") || !json.at("function").is_object()) {
+        return std::unexpected(
+            invalid_request_error("tool_call.function must be an object", "messages.tool_calls"));
+    }
+
+    const auto& function = json.at("function");
+    static constexpr std::array<const char*, 2> kAllowedFunctionKeys = {"name", "arguments"};
+    if (auto unknown_keys =
+            reject_api_unknown_keys(function, "tool_call.function", kAllowedFunctionKeys);
+        !unknown_keys) {
+        return std::unexpected(unknown_keys.error());
+    }
+    if (!function.contains("name") || !function.at("name").is_string()) {
+        return std::unexpected(invalid_request_error("tool_call.function.name must be a string",
+                                                     "messages.tool_calls"));
+    }
+    if (!function.contains("arguments") || !function.at("arguments").is_string()) {
+        return std::unexpected(invalid_request_error(
+            "tool_call.function.arguments must be a string", "messages.tool_calls"));
+    }
+
+    return zoo::OwnedToolCall{
+        json.at("id").get<std::string>(),
+        function.at("name").get<std::string>(),
+        function.at("arguments").get<std::string>(),
+    };
+}
+
 ApiResult<ChatMessage> parse_message(const nlohmann::json& json, std::vector<ChatMessage>& seed) {
-    static constexpr std::array<const char*, 3> kAllowedMessageKeys = {"role", "content",
-                                                                       "tool_call_id"};
+    static constexpr std::array<const char*, 4> kAllowedMessageKeys = {
+        "role", "content", "tool_call_id", "tool_calls"};
     if (auto unknown_keys = reject_api_unknown_keys(json, "message", kAllowedMessageKeys);
         !unknown_keys) {
         return std::unexpected(unknown_keys.error());
@@ -70,6 +116,10 @@ ApiResult<ChatMessage> parse_message(const nlohmann::json& json, std::vector<Cha
     ChatMessage message{MessageRole::User, {}, {}};
 
     if (*role == MessageRole::Tool) {
+        if (json.contains("tool_calls")) {
+            return std::unexpected(invalid_request_error(
+                "tool_calls is only valid for assistant messages", "messages.tool_calls"));
+        }
         if (!json.contains("tool_call_id") || !json.at("tool_call_id").is_string()) {
             return std::unexpected(invalid_request_error(
                 "tool messages must include a string tool_call_id", "messages"));
@@ -81,8 +131,30 @@ ApiResult<ChatMessage> parse_message(const nlohmann::json& json, std::vector<Cha
                 invalid_request_error("tool_call_id is only valid for tool messages", "messages"));
         }
 
-        message.role = *role;
-        message.content = std::move(content);
+        if (json.contains("tool_calls")) {
+            if (*role != MessageRole::Assistant) {
+                return std::unexpected(invalid_request_error(
+                    "tool_calls is only valid for assistant messages", "messages.tool_calls"));
+            }
+            if (!json.at("tool_calls").is_array()) {
+                return std::unexpected(
+                    invalid_request_error("tool_calls must be an array", "messages.tool_calls"));
+            }
+            std::vector<zoo::OwnedToolCall> tool_calls;
+            tool_calls.reserve(json.at("tool_calls").size());
+            for (const auto& tool_call_json : json.at("tool_calls")) {
+                auto tool_call = parse_tool_call(tool_call_json);
+                if (!tool_call) {
+                    return std::unexpected(tool_call.error());
+                }
+                tool_calls.push_back(std::move(*tool_call));
+            }
+            message =
+                ChatMessage::assistant_with_tool_calls(std::move(content), std::move(tool_calls));
+        } else {
+            message.role = *role;
+            message.content = std::move(content);
+        }
     }
 
     if (auto validation = validate_message_sequence(seed, message.role); !validation) {
@@ -646,6 +718,20 @@ ApiError map_runtime_error_to_api_error(const RuntimeError& error) {
         return invalid_request_error(error.message, std::nullopt, "invalid_output_schema");
     case RuntimeErrorCode::ExtractionFailed:
         return server_error(error.message, "extraction_failed");
+    case RuntimeErrorCode::GgufReadFailed:
+    case RuntimeErrorCode::GgufMetadataNotFound:
+    case RuntimeErrorCode::StoreCorrupted:
+    case RuntimeErrorCode::FilesystemError:
+        return server_error(error.message, "hub_error");
+    case RuntimeErrorCode::ModelNotFound:
+        return not_found_error(error.message, "model_not_found");
+    case RuntimeErrorCode::ModelAlreadyExists:
+        return conflict_error(error.message, "model_already_exists");
+    case RuntimeErrorCode::DownloadFailed:
+    case RuntimeErrorCode::HuggingFaceApiError:
+        return server_error(error.message, "model_download_failed");
+    case RuntimeErrorCode::InvalidModelIdentifier:
+        return invalid_request_error(error.message, std::nullopt, "invalid_model_identifier");
     case RuntimeErrorCode::Unknown:
         break;
     }
