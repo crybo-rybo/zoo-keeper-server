@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Zoo Keeper Server
   description: Local LLM inference server with an OpenAI-compatible subset REST API.
-  version: 0.0.1
+  version: 0.0.4
   license:
     name: MIT
 

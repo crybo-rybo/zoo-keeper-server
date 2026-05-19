@@ -80,6 +80,11 @@ Result<void> HttpConfig::validate() const {
     if (idle_connection_timeout_seconds < 0) {
         return std::unexpected("http.idle_connection_timeout_seconds must be >= 0");
     }
+    for (const auto& origin : cors_allow_origins) {
+        if (origin.empty()) {
+            return std::unexpected("http.cors_allow_origins entries must not be empty");
+        }
+    }
     return {};
 }
 
